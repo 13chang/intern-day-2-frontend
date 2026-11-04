@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# pnpm 在 bind mount 的项目根上会自建本地存储
+.pnpm-store
+
 # 本地环境变量（保留 .env.example）
 .env
 .env.*
