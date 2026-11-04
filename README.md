@@ -2,9 +2,9 @@
 
 登录页 + 待办清单前端，React 19 + TypeScript + Vite。
 
-- 配套后端仓库：`intern-day-2-backend`（地址：`https://github.com/<你的账号>/intern-day-2-backend`）
+- 配套后端仓库：`intern-day-2-backend`（地址：`https://github.com/13chang/intern-day-2-backend`）
 - 本仓库对应 PR：`（创建 PR 后补充）`
-- 联调分支：`feat/login-and-custom-feature`
+- 联调分支：两仓库均使用 `feat/login-and-custom-feature`（同名分支，交付评审分支）
 
 ## 1. 功能范围与验收条件
 
