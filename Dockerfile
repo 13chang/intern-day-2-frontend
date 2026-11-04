@@ -4,7 +4,8 @@ FROM node:20-slim
 # 容器内默认访问不了 registry.npmjs.org，构建与运行统一走镜像源
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 
-RUN corepack enable && npm install -g pnpm@latest
+# 不用 corepack：它会先建 /usr/local/bin/pnpm 软链，导致 npm install -g pnpm 报 EEXIST
+RUN npm install -g pnpm@10
 
 WORKDIR /app
 
