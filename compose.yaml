@@ -1,0 +1,11 @@
+services:
+  frontend:
+    build: .
+    image: intern-day-2-frontend:local
+    container_name: intern-day-2-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      # 浏览器访问的 API 基地址，需与后端 CORS 放行的来源一致
+      VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:8000}"
+    restart: unless-stopped

@@ -1,0 +1,11 @@
+.git
+.gitignore
+.devcontainer
+.github
+node_modules
+dist
+dist-ssr
+.env
+.env.*
+!.env.example
+README.md
