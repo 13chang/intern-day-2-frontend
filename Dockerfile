@@ -1,6 +1,9 @@
 # 练习用镜像：用 Vite 开发服务器演示，不是生产构建
 FROM node:20-slim
 
+# 容器内默认访问不了 registry.npmjs.org，构建与运行统一走镜像源
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+
 RUN corepack enable && npm install -g pnpm@latest
 
 WORKDIR /app
