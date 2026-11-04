@@ -3,6 +3,7 @@
 .devcontainer
 .github
 node_modules
+.pnpm-store
 dist
 dist-ssr
 .env
