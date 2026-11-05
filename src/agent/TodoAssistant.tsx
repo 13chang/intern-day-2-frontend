@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CopilotChat, CopilotKitProvider } from '@copilotkit/react-core/v2'
+import { CopilotChat, CopilotKitProvider, useConfigureSuggestions } from '@copilotkit/react-core/v2'
 import '@copilotkit/react-core/v2/styles.css'
 import { fetchAgentInfo, readToken } from '../api'
 import type { AgentInfo, User } from '../types'
@@ -12,9 +12,28 @@ const RUNTIME_URL =
 // 必须和 server/index.mjs 里注册的 Agent 标识一致，否则 Runtime 找不到 Agent
 const AGENT_ID = 'todo-agent'
 
+// 空会话时展示的快捷提问，对应参考设计里的「I can help you with」卡片
+const SUGGESTIONS = [
+  { title: '我还有哪些没做完的待办？', message: '我还有哪些没做完的待办？' },
+  { title: '我一共完成了多少项？', message: '我一共完成了多少项待办？' },
+  { title: '哪几条还没做完？', message: '我的待办里，哪几条还没做完？' },
+  { title: '你能帮我做什么？', message: '你能帮我做什么？' },
+]
+
 type Props = {
   user: User
   onExpired: () => void
+}
+
+/**
+ * 注册快捷提问。
+ *
+ * 必须放在 Provider 内部：它读的是当前 Agent 的会话上下文，
+ * 放到 Provider 外面拿不到配置，等于空操作。
+ */
+function ChatSuggestions() {
+  useConfigureSuggestions({ suggestions: SUGGESTIONS })
+  return null
 }
 
 export default function TodoAssistant({ user, onExpired }: Props) {
@@ -58,7 +77,7 @@ export default function TodoAssistant({ user, onExpired }: Props) {
     [onExpired],
   )
 
-  const modeLabel =
+  const modeText =
     agentInfo === null
       ? 'Agent 状态未知'
       : agentInfo.mode === 'mock'
@@ -67,13 +86,15 @@ export default function TodoAssistant({ user, onExpired }: Props) {
 
   return (
     <section className="assistant" aria-label="任务助手">
-      <header className="assistant__header">
-        <div>
-          <h2 className="assistant__title">任务助手</h2>
-          <p className="hint hint--small">
-            {modeLabel} · 只读工具：{agentInfo?.tools.join('、') ?? 'list_my_todos'}
-          </p>
-        </div>
+      <header className="assistant__hero">
+        <h2 className="assistant__title">问问你的待办</h2>
+        <p className="assistant__subtitle">
+          只读取你自己的清单 · 只读工具 {agentInfo?.tools.join('、') ?? 'list_my_todos'}
+        </p>
+      </header>
+
+      <div className="assistant__bar">
+        <span className="assistant__mode">{modeText}</span>
         <button
           className="button button--ghost button--small"
           type="button"
@@ -84,11 +105,11 @@ export default function TodoAssistant({ user, onExpired }: Props) {
         >
           新建对话
         </button>
-      </header>
+      </div>
 
       {agentInfo?.mode === 'mock' && (
         <p className="banner banner--warn">
-          当前没有接入真实模型，回复由后端 Mock 规则生成；登录校验、AG-UI 事件流和只读工具都是真的。
+          未接入真实模型，回复由后端 Mock 规则生成；登录校验、AG-UI 事件流和只读工具都是真的。
         </p>
       )}
 
@@ -107,6 +128,7 @@ export default function TodoAssistant({ user, onExpired }: Props) {
           headers={buildHeaders}
           onError={handleError}
         >
+          <ChatSuggestions />
           <CopilotChat
             key={chatKey}
             agentId={AGENT_ID}
