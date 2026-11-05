@@ -107,6 +107,9 @@ export default function TodoPage({ user, onLogout, onExpired }: Props) {
   return (
     <main className="screen screen--wide">
       <div className="workspace">
+        {/* 聊天区放主栏：它是这页的主角，待办列表退成右侧栏 */}
+        <TodoAssistant user={user} onExpired={onExpired} />
+
         <div className="panel">
         <header className="panel__header">
           <div>
@@ -191,8 +194,6 @@ export default function TodoPage({ user, onLogout, onExpired }: Props) {
           <span className="hint hint--small">数据由后端接口读写</span>
         </footer>
         </div>
-
-        <TodoAssistant user={user} onExpired={onExpired} />
       </div>
     </main>
   )

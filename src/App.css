@@ -458,10 +458,11 @@
 
 .workspace {
   width: 100%;
-  max-width: 1180px;
+  max-width: 1280px;
   margin: 0 auto;
+  /* 聊天区是主栏，待办列表退成右侧窄栏 */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 430px);
+  grid-template-columns: minmax(0, 1fr) 360px;
   gap: 20px;
   align-items: start;
 }
@@ -558,15 +559,16 @@
 }
 
 .welcome__title {
-  font-size: 26px;
+  font-size: 34px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   text-align: center;
+  line-height: 1.25;
 }
 
 .welcome__box {
   width: 100%;
-  max-width: 420px;
+  max-width: 560px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -633,7 +635,7 @@
 
 .welcome__suggests {
   width: 100%;
-  max-width: 420px;
+  max-width: 560px;
   margin-top: 10px;
 }
 
