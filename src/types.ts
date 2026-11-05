@@ -17,3 +17,12 @@ export type TodoItem = {
   done: boolean
   created_at: number
 }
+
+// 后端 GET /agent/info 的返回，用来在页面上如实标注当前是 Mock 还是真实模型
+export type AgentInfo = {
+  agent: string
+  mode: 'mock' | 'openai'
+  model: string | null
+  tools: string[]
+  reason: string
+}

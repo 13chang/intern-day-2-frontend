@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ApiError, createItem, listItems, removeItem, setItemDone } from '../api'
+import TodoAssistant from '../agent/TodoAssistant'
 import type { TodoItem, User } from '../types'
 
 type Props = {
@@ -104,8 +105,9 @@ export default function TodoPage({ user, onLogout, onExpired }: Props) {
   const doneCount = items.filter((item) => item.done).length
 
   return (
-    <main className="screen">
-      <div className="panel">
+    <main className="screen screen--wide">
+      <div className="workspace">
+        <div className="panel">
         <header className="panel__header">
           <div>
             <h1 className="panel__title">我的待办</h1>
@@ -188,6 +190,9 @@ export default function TodoPage({ user, onLogout, onExpired }: Props) {
           </span>
           <span className="hint hint--small">数据由后端接口读写</span>
         </footer>
+        </div>
+
+        <TodoAssistant user={user} onExpired={onExpired} />
       </div>
     </main>
   )
