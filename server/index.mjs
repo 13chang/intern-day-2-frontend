@@ -75,6 +75,59 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", agent: AGENT_ID, agentUrl: AGENT_URL });
 });
 
+/**
+ * 上游无响应时的兜底：不让浏览器一直转圈。
+ *
+ * 实测过的两种情况差别很大：
+ * - 后端进程被杀 → 连接直接被拒，Runtime 立刻发出 RUN_ERROR（约 60ms），页面正常报错；
+ * - 后端被 SIGSTOP 暂停 / 模型挂住 / 网络黑洞 → SSE 响应能建立，但永远没有数据。
+ *   这种"连得上但不说话"最难受：没有任何错误事件，前端就一直停在"发送中"。
+ *
+ * 所以这里加一道空闲保护：本次运行超过 STREAM_IDLE_TIMEOUT_MS 吐不出任何字节，
+ * 就主动写一条 RUN_ERROR 再关闭连接，前端据此结束等待并提示失败。
+ * 只要还在持续输出（Mock 的增量间隔是 50ms），计时就会被不断重置，不会误伤长回复。
+ */
+const STREAM_IDLE_TIMEOUT_MS = Number(process.env.STREAM_IDLE_TIMEOUT_MS ?? 20000);
+
+app.use(BASE_PATH, (req, res, next) => {
+  if (!req.path.endsWith("/run")) return next();
+
+  let finished = false;
+  const timer = setTimeout(() => {
+    if (finished || res.writableEnded) return;
+    const seconds = Math.round(STREAM_IDLE_TIMEOUT_MS / 1000);
+    console.warn(`[runtime] 上游 ${STREAM_IDLE_TIMEOUT_MS}ms 无任何数据，主动结束本次运行`);
+    try {
+      res.write(
+        `data: ${JSON.stringify({
+          type: "RUN_ERROR",
+          message: `后端 Agent 超过 ${seconds} 秒没有响应，已断开`,
+          code: "UPSTREAM_TIMEOUT",
+        })}\n\n`,
+      );
+    } catch {
+      // 连接已经断了，不需要再处理
+    }
+    res.end();
+  }, STREAM_IDLE_TIMEOUT_MS);
+
+  const stop = () => {
+    finished = true;
+    clearTimeout(timer);
+  };
+  res.on("finish", stop);
+  res.on("close", stop);
+
+  // 有数据写出就重置计时：只要上游还在吐，就不算空闲
+  const originalWrite = res.write.bind(res);
+  res.write = (...args) => {
+    timer.refresh();
+    return originalWrite(...args);
+  };
+
+  next();
+});
+
 app.use(
   createCopilotExpressHandler({
     runtime,

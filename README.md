@@ -102,6 +102,24 @@ Runtime 自己不解析、不缓存、不记录令牌；日志只打方法与路
 - Runtime 侧用 `identifyUser` 把令牌摘要作为线程归属，别人拿到 `threadId` 也读不到我的会话；
   **这不是鉴权**，鉴权始终在 Python 后端。
 
+### 4.5 上游没有响应时怎么收尾
+
+后端出问题时，浏览器侧的体验差别很大，实测过三种情况：
+
+| 情况 | Runtime 的行为 | 页面表现 |
+| --- | --- | --- |
+| 后端进程被杀 | 连接被拒，约 60ms 就发出 `RUN_ERROR`（`fetch failed`） | 立刻提示失败，结束加载 |
+| 凭证无效 / 过期 | HTTP 200 + `RUN_ERROR`（内含 401） | 回到登录页 |
+| 后端假死（SIGSTOP、模型挂住、网络黑洞） | 连接能建但永远没有数据 | 会一直停在"发送中" |
+
+第三种最容易被忽略：没有任何错误事件，前端无从判断该不该结束。所以 `server/index.mjs`
+加了一道空闲保护：本次运行超过 `STREAM_IDLE_TIMEOUT_MS`（默认 20 秒）没有吐出任何字节，
+就主动写一条 `RUN_ERROR`（`UPSTREAM_TIMEOUT`）并关闭连接，页面据此结束等待并提示失败。
+
+计时是"空闲"而不是"总时长"：每写出一块增量就重置，所以长时间的正常回复不会被误伤
+（实测把阈值压到 5 秒，一次 2 秒、39 条增量的正常对话仍然零错误跑完）。
+演示时想快点看到效果，可以临时设 `STREAM_IDLE_TIMEOUT_MS=3000`。
+
 ## 5. 环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -112,6 +130,7 @@ Runtime 自己不解析、不缓存、不记录令牌；日志只打方法与路
 | `AGENT_ID` | `todo-agent` | Runtime 注册的 Agent 标识，需与前端一致 |
 | `PORT` | `4000` | Runtime 监听端口 |
 | `RUNTIME_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Runtime 放行的来源 |
+| `STREAM_IDLE_TIMEOUT_MS` | `20000` | 上游 Agent 多久没有任何输出就主动结束本次运行，见 §4.5 |
 | `COPILOTKIT_TELEMETRY_DISABLED` | `true`（compose 中设置） | 练习项目不向第三方发送使用数据 |
 
 `.env.example` 提供模板；`.env` 已被 `.gitignore` 忽略。`VITE_` 开头的变量会进打包产物，
@@ -177,6 +196,9 @@ docker compose logs --tail=100
 | Runtime 启动 | `node server/index.mjs` | ✅ `/health` 与 `/api/copilotkit/info` 均 200，`info` 列出 `todo-agent` |
 | Runtime 转发 | `POST /api/copilotkit/agent/todo-agent/run` | ✅ 事件流完整返回，工具结果正确 |
 | 无凭证 | 同上但不带 Authorization | ⚠️ HTTP 200 + `RUN_ERROR`（内含 401），前端据此回登录页 |
+| 后端被杀 | 停掉后端后发消息 | ✅ 58ms 返回 `RUN_ERROR`（`fetch failed`），前端提示失败并结束加载 |
+| 后端暂停 | 后端假死（连接可建但不回数据） | ✅ 空闲 20s 后返回 `RUN_ERROR`（`UPSTREAM_TIMEOUT`），不再无限等待 |
+| 长回复不误伤 | 空闲阈值临时设 5s，跑一次正常对话 | ✅ 39 条增量、0 错误、2.08s 完成 |
 | 正常登录 | 正确账号密码 | ⬜ 待浏览器验证 |
 | 错误密码 | 错误密码 / 空值 | ⬜ 待浏览器验证 |
 | 刷新保持登录 | 登录后刷新 | ⬜ 待浏览器验证 |

@@ -29,6 +29,8 @@ services:
       # 所以走 compose 的 host-gateway 访问宿主机映射出来的 8000 端口
       AGENT_URL: "${AGENT_URL:-http://host.docker.internal:8000/agent}"
       RUNTIME_CORS_ORIGINS: "${RUNTIME_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+      # 上游多久没有输出就主动结束本次运行，避免后端假死时页面一直转圈
+      STREAM_IDLE_TIMEOUT_MS: "${STREAM_IDLE_TIMEOUT_MS:-20000}"
       # 练习项目不需要把使用数据发到第三方，默认关掉
       COPILOTKIT_TELEMETRY_DISABLED: "true"
     extra_hosts:
