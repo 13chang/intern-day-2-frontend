@@ -8,4 +8,31 @@ services:
     environment:
       # 浏览器访问的 API 基地址，需与后端 CORS 放行的来源一致
       VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:8000}"
+      # 浏览器访问的 CopilotKit Runtime 基地址
+      VITE_COPILOT_RUNTIME_URL: "${VITE_COPILOT_RUNTIME_URL:-http://localhost:4000/api/copilotkit}"
+    restart: unless-stopped
+
+  # 第三天新增：CopilotKit Runtime。
+  # 和前端用同一份镜像，只是换启动命令，避免重复构建一遍依赖。
+  runtime:
+    build: .
+    image: intern-day-2-frontend:local
+    container_name: intern-day-2-runtime
+    command: ["node", "server/index.mjs"]
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: "4000"
+      # 必须和前端 CopilotKitProvider 的 agentId 一致
+      AGENT_ID: "todo-agent"
+      # 后端属于另一个 Compose 项目，服务名不能互相解析，
+      # 所以走 compose 的 host-gateway 访问宿主机映射出来的 8000 端口
+      AGENT_URL: "${AGENT_URL:-http://host.docker.internal:8000/agent}"
+      RUNTIME_CORS_ORIGINS: "${RUNTIME_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+      # 上游多久没有输出就主动结束本次运行，避免后端假死时页面一直转圈
+      STREAM_IDLE_TIMEOUT_MS: "${STREAM_IDLE_TIMEOUT_MS:-20000}"
+      # 练习项目不需要把使用数据发到第三方，默认关掉
+      COPILOTKIT_TELEMETRY_DISABLED: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped

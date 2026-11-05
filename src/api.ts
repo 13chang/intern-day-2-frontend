@@ -1,4 +1,4 @@
-import type { LoginResponse, TodoItem, User } from './types'
+import type { AgentInfo, LoginResponse, TodoItem, User } from './types'
 
 const BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
@@ -122,4 +122,10 @@ export function setItemDone(id: number, done: boolean): Promise<TodoItem> {
 
 export function removeItem(id: number): Promise<void> {
   return request<void>(`/items/${id}`, { method: 'DELETE' })
+}
+
+// 第三天：Agent 的运行信息。用来在页面上区分 Mock 和真实模型，
+// 也用来确认后端 Agent 端点确实挂了（未登录会被 401 挡掉）。
+export function fetchAgentInfo(): Promise<AgentInfo> {
+  return request<AgentInfo>('/agent/info')
 }
