@@ -86,15 +86,10 @@ export default function TodoAssistant({ user, onExpired }: Props) {
 
   return (
     <section className="assistant" aria-label="任务助手">
-      <header className="assistant__hero">
-        <h2 className="assistant__title">问问你的待办</h2>
-        <p className="assistant__subtitle">
-          只读取你自己的清单 · 只读工具 {agentInfo?.tools.join('、') ?? 'list_my_todos'}
-        </p>
-      </header>
-
       <div className="assistant__bar">
-        <span className="assistant__mode">{modeText}</span>
+        <span className="assistant__mode">
+          {modeText} · 只读工具 {agentInfo?.tools.join('、') ?? 'list_my_todos'}
+        </span>
         <button
           className="button button--ghost button--small"
           type="button"
@@ -133,7 +128,12 @@ export default function TodoAssistant({ user, onExpired }: Props) {
             key={chatKey}
             agentId={AGENT_ID}
             labels={{
+              // 空会话时居中显示的大标题，对应参考稿里 "Ask Oswell" 的位置。
+              // 交给 SDK 渲染而不是自己在外面画一个，因为它就处在会话区正中间，
+              // 外面再加一层标题只会出现两个标题、中间还留一大块空白。
+              welcomeMessageText: '问问你的待办',
               chatInputPlaceholder: '问问你的待办，例如：我还有哪些没做完？',
+              chatDisclaimerText: '助手可能出错，重要内容请以列表为准。',
             }}
           />
         </CopilotKitProvider>

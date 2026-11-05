@@ -487,27 +487,8 @@
   min-height: 520px;
 }
 
-/* 参考设计里的居中大标题：空会话时最显眼的就是它 */
-.assistant__hero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  text-align: center;
-  padding: 6px 0 2px;
-}
-
-.assistant__title {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.assistant__subtitle {
-  color: var(--muted);
-  font-size: 12.5px;
-}
-
+/* 顶部只留一条状态栏；大标题交给 CopilotChat 的空状态渲染，
+   它本身就处在会话区正中，外面再画一个标题会重复并留出空白 */
 .assistant__bar {
   display: flex;
   align-items: center;
