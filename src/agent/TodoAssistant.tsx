@@ -5,6 +5,8 @@ import type { Message } from '@ag-ui/client'
 import '@copilotkit/react-core/v2/styles.css'
 import { fetchAgentInfo, readToken } from '../api'
 import type { AgentInfo, User } from '../types'
+import { classifyChatError, describeForConsole } from './chatError'
+import type { ChatError } from './chatError'
 
 // 浏览器访问的是宿主机映射出来的 Runtime 端口，不是容器内地址
 const RUNTIME_URL =
@@ -13,6 +15,10 @@ const RUNTIME_URL =
 
 // 必须和 server/index.mjs 里注册的 Agent 标识一致，否则 Runtime 找不到 Agent
 const AGENT_ID = 'todo-agent'
+
+// 重试上限。任务说明要求「不通过扩大重试次数掩盖失败」，
+// 所以点两次还不行就停手，让用户看清问题，而不是无限重试烧资源。
+const MAX_RETRIES = 2
 
 // 空会话时的快捷提问，对应参考设计里的「I can help you with」卡片
 const SUGGESTIONS = [
@@ -68,7 +74,48 @@ type Props = {
 type StageProps = {
   modeText: string
   toolsText: string
+  error: ChatError | null
   onClearError: () => void
+}
+
+/**
+ * 失败提示条。
+ *
+ * 只展示分类后的文案（title / detail），不展示 SDK 的原始 message ——
+ * 那里面常带上游地址和端口，贴到截图里不合适。
+ * 重试按钮有次数上限，到顶后禁用并改文案，避免用户反复点击。
+ */
+function ErrorAlert({
+  error,
+  retries,
+  busy,
+  onRetry,
+}: {
+  error: ChatError
+  retries: number
+  busy: boolean
+  onRetry: () => void
+}) {
+  const exhausted = retries >= MAX_RETRIES
+
+  return (
+    <div className="alert" role="alert">
+      <div className="alert__body">
+        <p className="alert__title">{error.title}</p>
+        <p className="alert__detail">{error.detail}</p>
+      </div>
+      {error.retryable && (
+        <button
+          className="button button--ghost button--small alert__retry"
+          type="button"
+          onClick={onRetry}
+          disabled={busy || exhausted}
+        >
+          {exhausted ? '已达重试上限' : retries > 0 ? `重试（${retries}/${MAX_RETRIES}）` : '重试'}
+        </button>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -83,11 +130,12 @@ type StageProps = {
  * 就切回 CopilotChat 负责消息列表、流式增量、工具调用展示和错误兜底。
  * 这样既拿到了参考稿的版式，又不用重写已验证过的聊天逻辑。
  */
-function ChatStage({ modeText, toolsText, onClearError }: StageProps) {
+function ChatStage({ modeText, toolsText, error, onClearError }: StageProps) {
   const { agent } = useAgent({ agentId: AGENT_ID })
   const [hasMessages, setHasMessages] = useState(false)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [retries, setRetries] = useState(0)
 
   useEffect(() => {
     const subscription = agent.subscribe({
@@ -96,6 +144,11 @@ function ChatStage({ modeText, toolsText, onClearError }: StageProps) {
     setHasMessages(agent.messages.length > 0)
     return () => subscription.unsubscribe()
   }, [agent])
+
+  // 错误消失（用户重新提问或手动清掉）后，重试计数归零
+  useEffect(() => {
+    if (!error) setRetries(0)
+  }, [error])
 
   const ask = useCallback(
     async (text: string) => {
@@ -118,6 +171,23 @@ function ChatStage({ modeText, toolsText, onClearError }: StageProps) {
     [agent, onClearError, sending],
   )
 
+  /**
+   * 重试 = 用现有会话重新跑一次，不重新添加用户消息。
+   *
+   * 这样失败的这一轮不会在对话里留下两条一样的提问；
+   * 上下文也保持原样，符合「重新提交」而不是「重新提问」的语义。
+   */
+  const retry = useCallback(async () => {
+    if (agent.isRunning || retries >= MAX_RETRIES) return
+    setRetries((count) => count + 1)
+    onClearError()
+    try {
+      await agent.runAgent()
+    } catch {
+      // 仍然交给 onError
+    }
+  }, [agent, onClearError, retries])
+
   const handleSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault()
@@ -131,6 +201,7 @@ function ChatStage({ modeText, toolsText, onClearError }: StageProps) {
     agent.setMessages([])
     setDraft('')
     setHasMessages(false)
+    setRetries(0)
   }, [agent, onClearError])
 
   return (
@@ -147,6 +218,15 @@ function ChatStage({ modeText, toolsText, onClearError }: StageProps) {
           新建对话
         </button>
       </div>
+
+      {error && (
+        <ErrorAlert
+          error={error}
+          retries={retries}
+          busy={agent.isRunning || sending}
+          onRetry={() => void retry()}
+        />
+      )}
 
       <div className="assistant__body">
         {/* CopilotChat 一直挂着，空会话时只是隐藏：
@@ -219,7 +299,7 @@ function ChatStage({ modeText, toolsText, onClearError }: StageProps) {
 
 export default function TodoAssistant({ user, onExpired }: Props) {
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null)
-  const [chatError, setChatError] = useState('')
+  const [chatError, setChatError] = useState<ChatError | null>(null)
 
   useEffect(() => {
     let active = true
@@ -244,14 +324,17 @@ export default function TodoAssistant({ user, onExpired }: Props) {
 
   const handleError = useCallback(
     (event: { error: Error; code: string; context: Record<string, unknown> }) => {
-      const text = `${event.code} ${event.error.message}`.toLowerCase()
-      // 事件流还没建立就被拒（401），说明登录状态不可用，回到登录页
-      if (text.includes('401') || text.includes('unauthor') || text.includes('登录')) {
+      // 原始错误只进控制台：里面的上游地址、端口、堆栈片段不该出现在界面和截图里
+      console.warn(describeForConsole(event))
+
+      const classified = classifyChatError(event)
+      if (classified.kind === 'auth') {
+        // 事件流没建立就被拒（401），登录状态已经不可用，回登录页
         onExpired()
         return
       }
-      // 事件流已经建立后出的错，留在页面上提示，让用户可以重试
-      setChatError(`对话失败：${event.error.message || '请稍后重试'}`)
+      // 其它错误留在页面上提示，并给出一次有上限的重试
+      setChatError(classified)
     },
     [onExpired],
   )
@@ -271,12 +354,6 @@ export default function TodoAssistant({ user, onExpired }: Props) {
         </p>
       )}
 
-      {chatError && (
-        <p className="banner banner--error" role="alert">
-          {chatError}
-        </p>
-      )}
-
       <CopilotKitProvider
         // 换账号时重新挂载，避免上一个账号的会话残留在界面里
         key={user.id}
@@ -288,7 +365,8 @@ export default function TodoAssistant({ user, onExpired }: Props) {
         <ChatStage
           modeText={modeText}
           toolsText={`只读工具 ${agentInfo?.tools.join('、') ?? 'list_my_todos'}`}
-          onClearError={() => setChatError('')}
+          error={chatError}
+          onClearError={() => setChatError(null)}
         />
       </CopilotKitProvider>
     </section>
