@@ -450,6 +450,10 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
               placeholder="例如：下午容易犯困，希望多安排走动；开会多，别把活动排太密"
               onChange={(event) => patch({ note: event.target.value })}
             />
+            <span className="hint hint--small">
+              偏好只能在四种活动里调：起身走动、接水、肩颈放松、站立片刻。它决定挑哪一类、
+              排多密、说明怎么写；需要场地或器械的（比如打篮球、健身）不会排进来。
+            </span>
           </label>
         </div>
       )}
