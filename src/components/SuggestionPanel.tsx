@@ -154,6 +154,11 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
       }
     }
 
+    // 免打扰两个框都清空 = 这次没有免打扰。
+    // 不能只把 null 传上去：后端把 null 理解成"沿用已保存的设置"，
+    // 于是用户清空了时间、排出来的却还是按旧免打扰避开 —— 看起来像没生效。
+    const noQuiet = !conditions.quiet_start && !conditions.quiet_end
+
     setLoading(true)
     setErrorText('')
     setErrorIndex(null)
@@ -169,11 +174,9 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
                 work_start: conditions.work_start,
                 work_end: conditions.work_end,
                 windows: conditions.windows,
-                // 勾了"暂时不考虑免打扰"就不要再把时间传上去，
-                // 否则后端会按"两者都非空"覆盖掉 ignore_quiet 的意图
-                quiet_start: conditions.ignore_quiet ? null : conditions.quiet_start || null,
-                quiet_end: conditions.ignore_quiet ? null : conditions.quiet_end || null,
-                ignore_quiet: conditions.ignore_quiet,
+                quiet_start: conditions.ignore_quiet || noQuiet ? null : conditions.quiet_start,
+                quiet_end: conditions.ignore_quiet || noQuiet ? null : conditions.quiet_end,
+                ignore_quiet: conditions.ignore_quiet || noQuiet,
               },
             }
           : { engine: 'rule' },
