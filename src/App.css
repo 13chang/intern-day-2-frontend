@@ -298,6 +298,44 @@
   color: #1f4fa8;
 }
 
+/* ---------- 失败提示（第四天）：分类文案 + 有上限的重试 ---------- */
+
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--danger-bg);
+  border: 1px solid #f3d6d2;
+  color: var(--danger);
+  font-size: 13px;
+  flex: none;
+}
+
+.alert__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.alert__title {
+  font-weight: 500;
+}
+
+.alert__detail {
+  color: #8a3b34;
+  line-height: 1.6;
+}
+
+/* 按钮不参与压缩，窄屏也不折行 */
+.alert__retry {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* ---------- 待办面板 ---------- */
 
 .panel {
