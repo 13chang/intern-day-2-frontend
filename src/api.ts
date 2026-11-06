@@ -1,4 +1,18 @@
-import type { AgentInfo, LoginResponse, TodoItem, User } from './types'
+import type {
+  Activity,
+  ActivityDraft,
+  ActivitySettings,
+  AgentInfo,
+  ConfirmResult,
+  GenerateResult,
+  LoginResponse,
+  OperationResult,
+  PostponeResult,
+  SuggestResult,
+  TodoItem,
+  User,
+  WeeklyStats,
+} from './types'
 
 const BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
@@ -128,4 +142,55 @@ export function removeItem(id: number): Promise<void> {
 // 也用来确认后端 Agent 端点确实挂了（未登录会被 401 挡掉）。
 export function fetchAgentInfo(): Promise<AgentInfo> {
   return request<AgentInfo>('/agent/info')
+}
+
+// ---------- 第五天：久坐活动助手 ----------
+//
+// 全部沿用上面的 request<T>()：错误统一抛 ApiError，message 就是后端 detail 里的中文。
+// 页面只负责显示 message，不再自己拼错误文案。
+
+export function fetchActivitySettings(): Promise<ActivitySettings> {
+  return request<ActivitySettings>('/activity/settings')
+}
+
+export function saveActivitySettings(body: ActivitySettings): Promise<ActivitySettings> {
+  return request<ActivitySettings>('/activity/settings', { method: 'PUT', body })
+}
+
+export function fetchTodayActivities(): Promise<Activity[]> {
+  return request<Activity[]>('/activity/today')
+}
+
+// force=true 用来"重建"：后端只清当天待执行的，已完成/已推迟/已跳过保留，周统计不会被打乱
+export function generateToday(force = false): Promise<GenerateResult> {
+  const query = force ? '?force=true' : ''
+  return request<GenerateResult>(`/activity/generate${query}`, { method: 'POST' })
+}
+
+export function completeActivity(id: number): Promise<OperationResult> {
+  return request<OperationResult>(`/activity/${id}/complete`, { method: 'POST' })
+}
+
+export function postponeActivity(id: number): Promise<PostponeResult> {
+  return request<PostponeResult>(`/activity/${id}/postpone`, { method: 'POST' })
+}
+
+export function skipActivity(id: number, reason?: string): Promise<OperationResult> {
+  return request<OperationResult>(`/activity/${id}/skip`, {
+    method: 'POST',
+    body: { reason: reason ?? null },
+  })
+}
+
+export function fetchWeeklyStats(): Promise<WeeklyStats> {
+  return request<WeeklyStats>('/activity/stats/weekly')
+}
+
+// 只算不存：返回的是草稿，用户点"确认保存"才走 confirmActivityDrafts
+export function suggestActivities(body: { count?: number; note?: string } = {}): Promise<SuggestResult> {
+  return request<SuggestResult>('/activity/suggestions', { method: 'POST', body })
+}
+
+export function confirmActivityDrafts(items: ActivityDraft[]): Promise<ConfirmResult> {
+  return request<ConfirmResult>('/activity/confirm', { method: 'POST', body: { items } })
 }
