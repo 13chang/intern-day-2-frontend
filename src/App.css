@@ -982,6 +982,14 @@
   letter-spacing: 0.2px;
 }
 
+/* 规则引擎的标注用中性色：不抢眼，但必须存在 —— 否则用户分不清
+   "这条是模型排的还是算法排的" */
+.badge--rule {
+  background: #f2f3f5;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 /* ---------- 设置面板（默认折叠） ---------- */
 
 .settings {
@@ -1171,6 +1179,13 @@
 .engine-option--active .engine-option__meta {
   color: var(--accent);
   opacity: 0.8;
+}
+
+/* 一句话说明当前引擎，避免"点完以为生效了" */
+.engine-picker__hint {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
 }
 
 /* 条件表单：只影响本次生成。视觉上比设置面板更轻，避免和上面的设置混淆 */

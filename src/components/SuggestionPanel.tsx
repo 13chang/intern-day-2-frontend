@@ -275,6 +275,15 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
         })}
       </div>
 
+      {/* 把"现在到底用哪个"写成一句话。
+          之前只有选中态的颜色区分，很容易点完没反应还以为生效了 —— 那正是
+          "选了 DeepSeek 却还是规则结果"这类误会最省成本的预防。 */}
+      <p className="engine-picker__hint">
+        {engine === 'llm'
+          ? `当前用 DeepSeek 真实模型${llmInfo?.model ? `（${llmInfo.model}）` : ''}，点「生成建议」会真实调用一次。`
+          : '当前用本地规则算法：不联网、结果确定。想让模型自己挑时间，点上面的「DeepSeek 真实模型」。'}
+      </p>
+
       {showConditions && !llmAvailable && (
         <p className="banner banner--warn">
           {llmInfo?.reason ?? '后端未启用真实模型。'}
@@ -438,7 +447,11 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
         <>
           {explanation && (
             <p className="suggest-panel__explain">
-              {mode === 'llm' && <span className="badge badge--engine">DeepSeek</span>}
+              {/* 两个引擎都标出来。只标 DeepSeek 的话，"规则引擎的结果"在用户眼里
+                  就是一段没有来源的假数据，根本分不清是不是模型没生效。 */}
+              <span className={mode === 'llm' ? 'badge badge--engine' : 'badge badge--rule'}>
+                {mode === 'llm' ? 'DeepSeek 生成' : '本地规则生成'}
+              </span>
               {explanation}
             </p>
           )}
