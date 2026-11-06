@@ -184,8 +184,15 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
       setSuggestions(result.suggestions)
       setPicked(result.suggestions.map(() => true))
       setExplanation(result.explanation)
-      setNotice(result.notice)
       setMode(result.mode)
+      // 请求写的是 llm，服务端回的是 rule：多半是后端还跑着不认 engine 字段的旧进程。
+      // 这种情况不能静默接受 —— 否则用户「选了 DeepSeek、出来的还是规则数据」，
+      // 页面看起来一切正常，只能靠肉眼猜。把差异直接摆到结果区上方。
+      if (showConditions && result.mode !== 'llm') {
+        setNotice('服务端没有按 DeepSeek 引擎返回，这一屏是本地规则的结果。后端可能还在跑旧版本进程，重启后重试。')
+      } else {
+        setNotice(result.notice)
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         onError(err, '生成建议失败')
