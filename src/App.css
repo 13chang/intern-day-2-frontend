@@ -1057,6 +1057,15 @@
   min-width: 0;
 }
 
+/* 校验指到哪个字段就把哪个框标出来：只有一段红字说明，用户还得自己找是哪个框错了 */
+.settings__field--invalid .field__label {
+  color: var(--danger);
+}
+
+.settings__field--invalid .input {
+  border-color: var(--danger);
+}
+
 .settings__group {
   display: flex;
   flex-direction: column;

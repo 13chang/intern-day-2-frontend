@@ -51,42 +51,103 @@ function toMinutes(hhmm: string): number {
   return Number(hour) * 60 + Number(minute)
 }
 
+/** 分钟数写回 HH:MM，用在提示里点名该改成什么。 */
+function toHHMM(minutes: number): string {
+  const hour = String(Math.floor(minutes / 60)).padStart(2, '0')
+  const minute = String(minutes % 60).padStart(2, '0')
+  return `${hour}:${minute}`
+}
+
+/** 校验结果：除了给人看的话，还带上"该改哪个字段"，好把那格标红。 */
+type ConditionProblem = {
+  message: string
+  field: 'work_start' | 'work_end' | 'windows' | 'count' | null
+}
+
 /**
- * 条件表单的校验。和后端 validate_settings 是同一套判断标准，
+ * 条件表单的校验。和后端 validate_settings / allowed_or_raise 是同一套判断标准，
  * 放在前端只是为了少一次往返：真正算数的还是后端那次校验。
  */
-function validateConditions(form: SuggestConditions): string {
-  if (!form.work_start || !form.work_end) return '请填写工作开始和结束时间。'
-  if (form.work_start >= form.work_end) return '工作结束时间必须晚于开始时间。'
-  if (form.windows.length === 0) return '至少要有一个可活动时段。'
+function validateConditions(form: SuggestConditions): ConditionProblem | null {
+  if (!form.work_start || !form.work_end) {
+    return { message: '请填写工作开始和结束时间。', field: null }
+  }
+  if (form.work_start >= form.work_end) {
+    return { message: '工作结束时间必须晚于开始时间。', field: 'work_end' }
+  }
+  if (form.windows.length === 0) {
+    return { message: '至少要有一个可活动时段。', field: 'windows' }
+  }
   for (const window of form.windows) {
-    if (!window.start || !window.end) return '可活动时段的开始和结束时间都要填。'
+    if (!window.start || !window.end) {
+      return { message: '可活动时段的开始和结束时间都要填。', field: 'windows' }
+    }
     if (window.start >= window.end) {
-      return `时段 ${window.start}-${window.end} 的开始时间必须早于结束时间。`
+      return {
+        message: `时段 ${window.start}-${window.end} 的开始时间必须早于结束时间。`,
+        field: 'windows',
+      }
     }
   }
+
   // 后端算的是「可活动时段 ∩ 工作时段」。两者完全不重叠时交集是空集，
-  // 任何引擎都排不出东西 —— 这不是模型的问题，是这两个字段没搭上。
-  // 提前拦住：省一次模型调用，提示也能直接指向出问题的地方。
+  // 任何引擎都排不出东西 —— 这不是模型的问题，是这两组字段没搭上。
+  // 光说"没有重叠"用户不知道该动哪个框，所以这里判断是哪一侧越界，
+  // 直接把字段和应该改成的时间点出来。
   const workStart = toMinutes(form.work_start)
   const workEnd = toMinutes(form.work_end)
-  const hasOverlap = form.windows.some(
-    (window) =>
-      Math.max(toMinutes(window.start), workStart) < Math.min(toMinutes(window.end), workEnd),
+  const spans = form.windows.map((window) => ({
+    start: toMinutes(window.start),
+    end: toMinutes(window.end),
+  }))
+  const hasOverlap = spans.some(
+    ({ start, end }) => Math.max(start, workStart) < Math.min(end, workEnd),
   )
   if (!hasOverlap) {
-    return (
-      `工作时段 ${form.work_start}-${form.work_end} 和可活动时段没有重叠，任何时间都排不进去。` +
-      '把可活动时段挪进工作时段，或者放宽工作时段。'
-    )
+    const windowText = form.windows
+      .map((window) => `${window.start}-${window.end}`)
+      .join('、')
+    const earliestStart = Math.min(...spans.map((span) => span.start))
+    const latestEnd = Math.max(...spans.map((span) => span.end))
+
+    if (workEnd <= earliestStart) {
+      return {
+        message:
+          `工作结束时间 ${form.work_end} 太早：工作时段 ${form.work_start}-${form.work_end} ` +
+          `与可活动时段 ${windowText} 没有重叠（时段最早 ${toHHMM(earliestStart)} 才开始）。` +
+          `把工作结束时间改到 ${toHHMM(earliestStart)} 之后，或者把时段挪进 ` +
+          `${form.work_start}-${form.work_end} 里。`,
+        field: 'work_end',
+      }
+    }
+    if (workStart >= latestEnd) {
+      return {
+        message:
+          `工作开始时间 ${form.work_start} 太晚：工作时段 ${form.work_start}-${form.work_end} ` +
+          `与可活动时段 ${windowText} 没有重叠（时段最晚 ${toHHMM(latestEnd)} 就结束了）。` +
+          `把工作开始时间改到 ${toHHMM(latestEnd)} 之前，或者把时段往后挪。`,
+        field: 'work_start',
+      }
+    }
+    return {
+      message:
+        `工作时段 ${form.work_start}-${form.work_end} 与可活动时段 ${windowText} 没有重叠` +
+        '（时段分别在上班前和下班后）。把时段挪进工作时段，或者放宽工作时段。',
+      field: 'work_end',
+    }
   }
+
   if (!form.ignore_quiet) {
     const hasStart = Boolean(form.quiet_start)
     const hasEnd = Boolean(form.quiet_end)
-    if (hasStart !== hasEnd) return '免打扰的开始和结束时间需要成对填写。'
+    if (hasStart !== hasEnd) {
+      return { message: '免打扰的开始和结束时间需要成对填写。', field: null }
+    }
   }
-  if (form.count < 1 || form.count > 8) return '每天次数需要在 1 到 8 之间。'
-  return ''
+  if (form.count < 1 || form.count > 8) {
+    return { message: '每天次数需要在 1 到 8 之间。', field: 'count' }
+  }
+  return null
 }
 
 /**
@@ -107,6 +168,8 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
   const [confirming, setConfirming] = useState(false)
   const [errorText, setErrorText] = useState('')
   const [errorIndex, setErrorIndex] = useState<number | null>(null)
+  /** 校验失败时该标红的那个字段，用户一改就清掉 */
+  const [problemField, setProblemField] = useState<ConditionProblem['field']>(null)
 
   const [engine, setEngine] = useState<SuggestionEngine>('rule')
   const [conditions, setConditions] = useState<SuggestConditions>(() => emptyConditions(settings))
@@ -124,10 +187,16 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
   const showConditions = engine === 'llm'
 
   function patch(changes: Partial<SuggestConditions>) {
+    // 改了输入就撤掉上一次的报错：否则红框和提示会留在已经改好的字段上，
+    // 看上去像"改了也没用"。
+    setErrorText('')
+    setProblemField(null)
     setConditions((prev) => ({ ...prev, ...changes }))
   }
 
   function patchWindow(index: number, changes: Partial<ActivityWindow>) {
+    setErrorText('')
+    setProblemField(null)
     setConditions((prev) => ({
       ...prev,
       windows: prev.windows.map((item, i) => (i === index ? { ...item, ...changes } : item)),
@@ -135,6 +204,8 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
   }
 
   function addWindow() {
+    setErrorText('')
+    setProblemField(null)
     setConditions((prev) => ({
       ...prev,
       windows: [...prev.windows, { label: 'window', start: '15:00', end: '16:00' }],
@@ -142,6 +213,8 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
   }
 
   function removeWindow(index: number) {
+    setErrorText('')
+    setProblemField(null)
     setConditions((prev) => ({ ...prev, windows: prev.windows.filter((_, i) => i !== index) }))
   }
 
@@ -153,6 +226,7 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
     setMode('')
     setErrorText('')
     setErrorIndex(null)
+    setProblemField(null)
   }
 
   function switchEngine(next: SuggestionEngine) {
@@ -169,7 +243,8 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
     if (showConditions) {
       const problem = validateConditions(conditions)
       if (problem) {
-        setErrorText(problem)
+        setErrorText(problem.message)
+        setProblemField(problem.field)
         return
       }
     }
@@ -324,27 +399,47 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
           </p>
 
           <div className="settings__row">
-            <label className="settings__field">
+            <label
+              className={
+                problemField === 'work_start'
+                  ? 'settings__field settings__field--invalid'
+                  : 'settings__field'
+              }
+            >
               <span className="field__label">工作开始</span>
               <input
                 className="input"
                 type="time"
                 value={conditions.work_start}
                 disabled={loading}
+                aria-invalid={problemField === 'work_start'}
                 onChange={(event) => patch({ work_start: event.target.value })}
               />
             </label>
-            <label className="settings__field">
+            <label
+              className={
+                problemField === 'work_end'
+                  ? 'settings__field settings__field--invalid'
+                  : 'settings__field'
+              }
+            >
               <span className="field__label">工作结束</span>
               <input
                 className="input"
                 type="time"
                 value={conditions.work_end}
                 disabled={loading}
+                aria-invalid={problemField === 'work_end'}
                 onChange={(event) => patch({ work_end: event.target.value })}
               />
             </label>
-            <label className="settings__field">
+            <label
+              className={
+                problemField === 'count'
+                  ? 'settings__field settings__field--invalid'
+                  : 'settings__field'
+              }
+            >
               <span className="field__label">安排次数</span>
               <input
                 className="input"
@@ -353,6 +448,7 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
                 max={8}
                 value={conditions.count}
                 disabled={loading}
+                aria-invalid={problemField === 'count'}
                 onChange={(event) => patch({ count: Number(event.target.value) })}
               />
             </label>
