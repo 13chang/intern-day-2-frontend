@@ -46,6 +46,11 @@ function emptyConditions(settings: ActivitySettings | null): SuggestConditions {
   }
 }
 
+function toMinutes(hhmm: string): number {
+  const [hour, minute] = hhmm.split(':')
+  return Number(hour) * 60 + Number(minute)
+}
+
 /**
  * 条件表单的校验。和后端 validate_settings 是同一套判断标准，
  * 放在前端只是为了少一次往返：真正算数的还是后端那次校验。
@@ -59,6 +64,21 @@ function validateConditions(form: SuggestConditions): string {
     if (window.start >= window.end) {
       return `时段 ${window.start}-${window.end} 的开始时间必须早于结束时间。`
     }
+  }
+  // 后端算的是「可活动时段 ∩ 工作时段」。两者完全不重叠时交集是空集，
+  // 任何引擎都排不出东西 —— 这不是模型的问题，是这两个字段没搭上。
+  // 提前拦住：省一次模型调用，提示也能直接指向出问题的地方。
+  const workStart = toMinutes(form.work_start)
+  const workEnd = toMinutes(form.work_end)
+  const hasOverlap = form.windows.some(
+    (window) =>
+      Math.max(toMinutes(window.start), workStart) < Math.min(toMinutes(window.end), workEnd),
+  )
+  if (!hasOverlap) {
+    return (
+      `工作时段 ${form.work_start}-${form.work_end} 和可活动时段没有重叠，任何时间都排不进去。` +
+      '把可活动时段挪进工作时段，或者放宽工作时段。'
+    )
   }
   if (!form.ignore_quiet) {
     const hasStart = Boolean(form.quiet_start)
