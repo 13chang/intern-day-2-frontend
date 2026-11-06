@@ -250,7 +250,9 @@ docker compose logs --tail=100
 - 对话历史只在内存中，刷新即丢；服务端也未持久化。
 - Runtime 的 `identifyUser` 用令牌摘要作为线程归属，不是鉴权；同一账号重新登录后令牌变化，
   旧会话记录找不回来。
-- 真实模型尚未接通（缺后端 `APP_LLM_*` 凭证），当前页面顶部会显示「Mock 模式」提示。
+- 真实模型已在后端接通（DeepSeek，用 `.env` 的 `MODEL_MODE` 切换）。前端无需改代码：
+  `/agent/info` 返回 `mode=openai` 时页面显示「真实模型：deepseek-chat」，
+  返回 `mode=mock` 时显示「Mock 模式」提示。模式由后端决定，前端不持有任何凭证。
 
 第四天新增：
 
