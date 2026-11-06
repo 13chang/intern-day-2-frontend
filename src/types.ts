@@ -88,15 +88,9 @@ export type WeeklyStats = {
   days: ActivityDay[]
 }
 
-// 建议草稿：没有 id，因为它还没进库
-export type ActivityDraft = {
-  scheduled_at: string
-  activity_type: string
-  title: string
-  description: string
-  duration_min: number
-  reason: string
-}
+// 建议草稿的响应形状（ActivityDraft / SuggestResult / ConfirmResult）随"安排建议"
+// 面板一起下线了：现在生成是一次点击直接落库，中间那层草稿不再经过前端。
+// 后端仍保留 POST /activity/suggestions 与 /confirm（只算不存的能力还在）。
 
 export type GenerateResult = {
   // 这批安排写到了哪一天。页面上同时能看今天和未来几天，
@@ -105,6 +99,10 @@ export type GenerateResult = {
   created: number
   activities: Activity[]
   notice: string
+  // 这批是谁排的：rule 是本地规则，llm 是 DeepSeek 真实模型
+  mode: string
+  // 模型给的排程理由（规则引擎没有这一段）
+  explanation: string
 }
 
 export type PostponeResult = {
@@ -117,18 +115,7 @@ export type OperationResult = {
   idempotent?: boolean
 }
 
-export type SuggestResult = {
-  suggestions: ActivityDraft[]
-  explanation: string
-  notice: string
-  mode: string
-  // 这批建议是排给哪一天的（请求里传了 day 就原样回来，没传就是今天）
-  day: string
-  // 模型给出、但被规则（免打扰/时段/冲突）丢掉的条数
-  dropped: number
-}
-
-// 生成建议的引擎：rule = 服务端规则算法，llm = DeepSeek 真实模型
+// 生成引擎：rule = 服务端规则算法，llm = DeepSeek 真实模型
 export type SuggestionEngine = 'rule' | 'llm'
 
 export type SuggestionEngineInfo = {
@@ -138,36 +125,6 @@ export type SuggestionEngineInfo = {
   available: boolean
   model: string | null
   reason: string
-}
-
-// 建议面板里的条件表单。只对这一次生成生效，不写回 /activity/settings
-export type SuggestConditions = {
-  work_start: string
-  work_end: string
-  windows: ActivityWindow[]
-  quiet_start: string
-  quiet_end: string
-  // 勾上就用"本次不考虑免打扰"代替上面两个时间
-  ignore_quiet: boolean
-  count: number
-  note: string
-}
-
-// 发给后端的形状：表单里空字符串表示"没填"，接口上要传 null 才表示"没有免打扰"
-export type SuggestConditionsPayload = {
-  work_start: string
-  work_end: string
-  windows: ActivityWindow[]
-  quiet_start: string | null
-  quiet_end: string | null
-  ignore_quiet: boolean
-}
-
-export type ConfirmResult = {
-  saved: number
-  // 保存到了哪一天：可能是未来某天，页面据此决定刷新哪一天的列表
-  day: string
-  activities: Activity[]
 }
 
 // 日期条上的一天。后端按天聚合，不是每天一个完整列表

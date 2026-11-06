@@ -1,16 +1,12 @@
 import type {
   Activity,
-  ActivityDraft,
   ActivitySettings,
   AgentInfo,
-  ConfirmResult,
   GenerateResult,
   LoginResponse,
   OperationResult,
   OverviewResult,
   PostponeResult,
-  SuggestConditionsPayload,
-  SuggestResult,
   SuggestionEngine,
   SuggestionEngineInfo,
   TodoItem,
@@ -173,13 +169,22 @@ export function fetchActivityOverview(days = 15): Promise<OverviewResult> {
   return request<OverviewResult>(`/activity/overview?days=${days}`)
 }
 
-// force=true 用来"重建"：后端只清那天待执行的，已完成/已推迟/已跳过保留，周统计不会被打乱
-export function generateDay(force = false, day?: string): Promise<GenerateResult> {
+// force=true 用来"重建"：后端只清那天待执行的，已完成/已推迟/已跳过保留，周统计不会被打乱。
+// engine 决定由谁排：rule=本地规则（不联网），llm=DeepSeek 真实模型。
+// 两条路后端都会写库，也都过同一套 validate_slot —— 选模型不等于可以绕过免打扰和冲突。
+export function generateDay(
+  force = false,
+  day?: string,
+  options: { engine?: SuggestionEngine; note?: string } = {},
+): Promise<GenerateResult> {
   const params = new URLSearchParams()
   if (force) params.set('force', 'true')
   if (day) params.set('day', day)
   const query = params.toString()
-  return request<GenerateResult>(`/activity/generate${query ? `?${query}` : ''}`, { method: 'POST' })
+  return request<GenerateResult>(`/activity/generate${query ? `?${query}` : ''}`, {
+    method: 'POST',
+    body: { engine: options.engine ?? 'rule', note: options.note ?? null },
+  })
 }
 
 export function completeActivity(id: number): Promise<OperationResult> {
@@ -206,22 +211,4 @@ export function fetchWeeklyStats(): Promise<WeeklyStats> {
 export async function fetchSuggestionEngines(): Promise<SuggestionEngineInfo[]> {
   const result = await request<{ engines: SuggestionEngineInfo[] }>('/activity/engines')
   return result.engines
-}
-
-// 只算不存：返回的是草稿，用户点"确认保存"才走 confirmActivityDrafts
-export function suggestActivities(
-  body: {
-    engine?: SuggestionEngine
-    count?: number
-    note?: string
-    conditions?: SuggestConditionsPayload
-    // 目标日期（YYYY-MM-DD）。不传就是今天；传了才会排到那一天
-    day?: string
-  } = {},
-): Promise<SuggestResult> {
-  return request<SuggestResult>('/activity/suggestions', { method: 'POST', body })
-}
-
-export function confirmActivityDrafts(items: ActivityDraft[]): Promise<ConfirmResult> {
-  return request<ConfirmResult>('/activity/confirm', { method: 'POST', body: { items } })
 }

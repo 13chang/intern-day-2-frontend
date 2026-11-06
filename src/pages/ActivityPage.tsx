@@ -16,13 +16,13 @@ import ActivityCard from '../components/ActivityCard'
 import type { ActivityAction } from '../components/ActivityCard'
 import DayStrip from '../components/DayStrip'
 import SettingsPanel from '../components/SettingsPanel'
-import SuggestionPanel from '../components/SuggestionPanel'
 import WeeklyStats from '../components/WeeklyStats'
 import TopBar from '../components/TopBar'
 import type {
   Activity,
   ActivitySettings,
   OverviewResult,
+  SuggestionEngine,
   SuggestionEngineInfo,
   Tab,
   User,
@@ -72,6 +72,13 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
   const [overview, setOverview] = useState<OverviewResult | null>(null)
   /** 正在看哪一天。往后看最多 14 天，能不能往前排由后端校验（越界返回 422） */
   const [day, setDay] = useState<string>(localIso)
+  /**
+   * 生成用哪个引擎：rule = 本地规则（不联网、结论确定），llm = DeepSeek 真实模型。
+   * 放在页头上而不是每个动作各问一次 —— 这是"我这段时间想怎么排"的偏好，不是单次选择。
+   */
+  const [engine, setEngine] = useState<SuggestionEngine>('rule')
+  /** 只给 llm 用：这次想让模型额外考虑什么。空着就是没有偏好 */
+  const [note, setNote] = useState('')
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -146,19 +153,34 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
     setError('')
     setNotice('')
     try {
-      const result = await generateDay(force, day)
-      setNotice(
-        result.notice ||
-          (result.created > 0
-            ? `已为${dayName(result.day || day, today)}生成 ${result.created} 条安排。`
-            : ''),
-      )
+      const result = await generateDay(force, day, {
+        engine,
+        // 规则引擎不读偏好，别把它传上去假装生效了
+        note: engine === 'llm' ? note.trim() : undefined,
+      })
+      const who = result.mode === 'llm' ? 'DeepSeek' : '本地规则'
+      const parts: string[] = []
+      if (result.created > 0) {
+        parts.push(`已用「${who}」为${dayName(result.day || day, today)}生成 ${result.created} 条安排。`)
+      }
+      // 模型的排程理由单独说，和"生成了几条"是两件事
+      if (result.explanation) parts.push(result.explanation)
+      if (result.notice) parts.push(result.notice)
+      setNotice(parts.join(' '))
       await load()
     } catch (err) {
       handleError(err, '生成安排失败')
     } finally {
       setGenerating(false)
     }
+  }
+
+  function handlePickEngine(next: SuggestionEngine) {
+    if (next === engine) return
+    setEngine(next)
+    // 上一次的提示是按另一个引擎说的（"已用规则生成…"），留着会误导
+    setNotice('')
+    setError('')
   }
 
   async function handleAction(id: number, action: ActivityAction) {
@@ -218,16 +240,61 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
               <h1 className="panel__title">{dayName(day, today)}的安排</h1>
               <p className="hint">{summary}</p>
             </div>
-            <button
-              className="button button--primary"
-              type="button"
-              onClick={() => void handleGenerate()}
-              disabled={generating || loading}
-              title={`为 ${day} 生成安排`}
-            >
-              {generating ? '生成中…' : pending.length > 0 ? '重新生成' : '生成安排'}
-            </button>
+            <div className="generate-bar">
+              {/* 引擎选择放在生成按钮旁边：点下去之前就知道这批是谁排的。
+                  只剩一个"生成安排"按钮的话，用户没法表达"这次让模型试试"。 */}
+              <div className="engine-picker" role="group" aria-label="生成引擎">
+                {engines.map((item) => {
+                  const disabled = !item.available || generating || loading
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={
+                        item.id === engine ? 'engine-option engine-option--active' : 'engine-option'
+                      }
+                      disabled={disabled}
+                      aria-pressed={item.id === engine}
+                      title={item.reason}
+                      onClick={() => handlePickEngine(item.id)}
+                    >
+                      <span className="engine-option__name">
+                        {item.id === 'llm' ? 'DeepSeek' : item.label}
+                      </span>
+                      {item.id === 'llm' && item.model && (
+                        <span className="engine-option__meta">{item.model}</span>
+                      )}
+                      {!item.available && <span className="engine-option__meta">未启用</span>}
+                    </button>
+                  )
+                })}
+              </div>
+              <button
+                className="button button--primary"
+                type="button"
+                onClick={() => void handleGenerate()}
+                disabled={generating || loading}
+                title={`为 ${day} 生成安排`}
+              >
+                {generating ? '生成中…' : pending.length > 0 ? '重新生成' : '生成安排'}
+              </button>
+            </div>
           </header>
+
+          {/* 选了 DeepSeek 才问偏好：规则引擎不读这段文字，摆出来等于骗人。
+              也顺手顶掉原来建议面板里那个"条件覆盖"表单 —— 长期设置就在下面的活动设置里。 */}
+          {engine === 'llm' && (
+            <input
+              className="input generate-note"
+              type="text"
+              value={note}
+              maxLength={200}
+              placeholder="想让 DeepSeek 额外考虑什么？（可不填，例如：下午容易困、只排两次）"
+              onChange={(event) => setNote(event.target.value)}
+              disabled={generating}
+              aria-label="给 DeepSeek 的偏好"
+            />
+          )}
 
           {error && (
             <p className="banner banner--error" role="alert">
@@ -268,18 +335,6 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
               ))}
             </ul>
           )}
-
-          <SuggestionPanel
-            settings={settings}
-            engines={engines}
-            day={day}
-            today={today}
-            onError={handleError}
-            onSaved={(count) => {
-              setNotice(count > 0 ? `已保存 ${count} 条安排。` : '')
-              void load()
-            }}
-          />
 
           <WeeklyStats stats={stats} />
         </div>
