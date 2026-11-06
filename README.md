@@ -67,8 +67,11 @@ CopilotKit 的架构是「前端 → Runtime → Agent」。Vite 开发服务器
 没有 CopilotKit 需要的运行时接口（`/info`、`/agent/:id/run`、线程管理等），也不能替代它。
 所以本仓库多了一个 `server/index.mjs`，作为 Compose 里的第二个服务跑在 4000 端口。
 
+浏览器不直接连 4000：`vite.config.ts` 把同源的 `/api/copilotkit` 代理到 Runtime，
+于是浏览器只依赖 5173 一个端口，不依赖宿主机对 4000 的转发（原因见 §4.7）。
+
 ```text
-浏览器 :5173  →  Runtime :4000 /api/copilotkit  →  后端 :8000/agent（AG-UI，SSE）
+浏览器 :5173  →  Vite 同源代理 /api/copilotkit  →  Runtime 容器 :4000  →  后端 :8000/agent（AG-UI，SSE）
 ```
 
 ### 4.2 认证怎么过去
@@ -93,7 +96,8 @@ Runtime 自己不解析、不缓存、不记录令牌；日志只打方法与路
 | React / Vite | 19.3.1 / 8.3.5 |
 
 - Agent 标识：前端 `agentId="todo-agent"`，Runtime 注册的 key 也是 `todo-agent`，**两处必须一致**。
-- Runtime 基地址：`http://localhost:4000/api/copilotkit`（浏览器视角）。
+- Runtime 基地址：浏览器侧是同源的 `/api/copilotkit`（由 Vite 代理），见 §4.7；
+  容器视角才是 `http://localhost:4000`，Compose 下是 `http://runtime:4000`。
 - Runtime 访问后端的地址：`http://host.docker.internal:8000/agent`（容器视角，compose 里配了 `host-gateway`）。
 
 ### 4.4 会话与上下文
@@ -131,7 +135,7 @@ Runtime 自己不解析、不缓存、不记录令牌；日志只打方法与路
 | --- | --- | --- | --- |
 | `auth` | 401 / 未授权 | 登录状态已失效，请重新登录 | 否（直接回登录页） |
 | `timeout` | `UPSTREAM_TIMEOUT` / 超时 | 后端超过 20 秒没有返回内容，本次运行已结束 | 是 |
-| `network` | `fetch failed` / 连接被拒 / DNS | 连不上 Runtime，确认 4000 端口的服务在运行 | 是 |
+| `network` | `fetch failed` / 连接被拒 / DNS | 连不上 Runtime，确认 `pnpm dev:runtime` 与 Vite 代理都在运行 | 是 |
 | `upstream` | 5xx / `RUN_ERROR` | 后端这次运行失败，可查看后端日志 | 是 |
 | `unknown` | 其它 | 这次运行中断了 | 是 |
 
@@ -145,12 +149,38 @@ Runtime 自己不解析、不缓存、不记录令牌；日志只打方法与路
 重试的语义是「用当前会话重新跑一次」（`agent.runAgent()`），**不重新添加用户消息**，
 所以失败的这一轮不会在对话里留下两条一样的提问，上下文也保持原样。
 
+### 4.7 发送按钮灰色：端口 4000 被占用（第四天补充排查）
+
+**现象**：输入框能打字，但发送按钮一直是灰色、点不动，页面也没有报错横幅。
+
+**排查过程**（实测记录）：
+
+1. Dev Containers 里 `node server/index.mjs` 确实在跑，容器内
+   `curl http://localhost:4000/health` 返回 `agent: todo-agent`；
+2. 但宿主机 `127.0.0.1:4000/health` 返回的是 `agentId: study_buddy` ——
+   4000 已被**另一个项目**的 Runtime 容器用 Docker Desktop 端口映射占住；
+3. VS Code PORTS 面板显示容器内 4000 的「自动转发」地址是 `localhost:4001`：
+   宿主机 4000 不可用，自动转发就顺延到下一个空闲端口；
+4. 前端原来写死 `http://localhost:4000/api/copilotkit`，浏览器连到的是别人的 Runtime，
+   `/info` 里只有 `study_buddy`、没有 `todo-agent`。CopilotKit 判定 agent 未就绪，
+   于是禁用输入与发送按钮 —— 这就是「能打字但发不出去」的原因。
+
+**修复**：改成同源代理。`TodoAssistant.tsx` 默认用 `/api/copilotkit`，
+`vite.config.ts` 把它代理到 Runtime；Compose 下由 `RUNTIME_PROXY_TARGET=http://runtime:4000`
+指向独立服务。浏览器只访问 5173，不再关心 4000 被转发到几号，也变成同源、不再受 CORS 限制。
+
+**同类问题怎么定位**：`netstat -ano | findstr :4000` 看是谁占着 → 浏览器 F12 Network
+看 `/info` 的请求地址与返回的 `agents` → 对比 PORTS 面板里 4000 的实际转发地址。
+临时解法是在 `.env` 里把 `VITE_COPILOT_RUNTIME_URL` 指向实际转发端口（如 4001），
+但那是一次性本地配置，换号还会复发，所以默认走同源代理。
+
 ## 5. 环境变量
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | `http://localhost:8000` | 浏览器访问后端的基地址 |
-| `VITE_COPILOT_RUNTIME_URL` | `http://localhost:4000/api/copilotkit` | 浏览器访问 Runtime 的基地址 |
+| `VITE_COPILOT_RUNTIME_URL` | 不设置（用同源 `/api/copilotkit`） | 仅 Runtime 部署在独立域名时才填绝对地址 |
+| `RUNTIME_PROXY_TARGET` | `http://localhost:4000` | Vite 代理目标；Compose 下注入 `http://runtime:4000` |
 | `AGENT_URL` | `http://host.docker.internal:8000/agent` | Runtime 容器访问后端的地址 |
 | `AGENT_ID` | `todo-agent` | Runtime 注册的 Agent 标识，需与前端一致 |
 | `PORT` | `4000` | Runtime 监听端口 |
@@ -171,7 +201,9 @@ pnpm dev            # 前端，vite.config.ts 已配置 host 0.0.0.0 与 5173 �
 pnpm dev:runtime    # 另开一个终端：CopilotKit Runtime，监听 4000
 ```
 
-两个进程都要起，只起 `pnpm dev` 时聊天框会报连接失败。
+两个进程都要起，只起 `pnpm dev` 时代理转发不到 Runtime，聊天框会报连接失败。
+4000 只在容器内部使用，不需要在 VS Code PORTS 面板里转发到宿主机；
+即使它被自动转发成 4001，也不影响聊天（见 §4.7）。
 
 ## 7. 独立启动（Docker Compose）
 
@@ -192,7 +224,9 @@ docker compose logs --tail=100
 两个服务用同一份镜像，只是启动命令不同，避免把依赖装两遍。
 
 - 前端地址：`http://localhost:5173`
-- Runtime 健康检查：`http://localhost:4000/health`
+- Runtime 健康检查：容器内 `http://localhost:4000/health`；浏览器侧可访问
+  `http://localhost:5173/api/copilotkit/info` 确认同源代理是否通
+- 浏览器不再直接访问 4000，`4000:4000` 映射只留作本机排查
 - 停止：`docker compose down`
 
 镜像内使用 **Vite 开发服务器**，这是练习用的开发启动方式，不是生产构建；生产部署应先 `pnpm build` 再用静态服务器托管 `dist/`。Compose 构建上下文为本仓库目录，不依赖后端仓库。
@@ -206,10 +240,12 @@ docker compose logs --tail=100
 两个仓库是两个独立的 Compose 项目，彼此不做服务发现；联调统一走宿主机端口：
 
 - 浏览器 → 后端：`http://localhost:8000`
-- 浏览器 → Runtime：`http://localhost:4000`
+- 浏览器 → Vite 同源代理 → Runtime：`http://localhost:5173/api/copilotkit`
 - Runtime 容器 → 后端：`http://host.docker.internal:8000/agent`
 
-因此后端需要放行 `http://localhost:5173` 的 CORS 与预检请求，Runtime 需要放行同一个来源。
+因此后端需要放行 `http://localhost:5173` 的 CORS 与预检请求。
+`RUNTIME_CORS_ORIGINS` 保留作为「浏览器直连 Runtime」部署方式的兜底；
+走同源代理时请求由 Vite 发出，不受浏览器 CORS 限制。
 
 ## 9. 自测记录
 
@@ -226,6 +262,9 @@ docker compose logs --tail=100
 | 长回复不误伤 | 空闲阈值临时设 5s，跑一次正常对话 | ✅ 39 条增量、0 错误、2.08s 完成 |
 | 类型检查（第四天改动后） | `pnpm exec tsc -b` | ✅ 0 错误 |
 | 构建（第四天改动后） | `pnpm build` | ✅ 通过（2.38s，产物 2.14 MB / gzip 627 kB） |
+| 同源代理 info（端口冲突修复后） | `curl http://localhost:5173/api/copilotkit/info` | ✅ 200，`agents` 列出 `todo-agent`（不再连到 `study_buddy`） |
+| 同源代理 SSE（端口冲突修复后） | 经 5173 发一次带令牌的 `/run` | ✅ `RUN_STARTED → TOOL_CALL_* → TEXT_MESSAGE_CONTENT` 增量完整返回 |
+| 类型检查 / 构建（端口冲突修复后） | `pnpm build` | ✅ 通过（1.37s），`vite.config.ts` 的 Node 类型检查 0 错误 |
 | 失败提示分类 | `chatError.ts` 五类分支 | ✅ 规则与文案已实现，浏览器点击待验证 |
 | 正常登录 | 正确账号密码 | ⬜ 待浏览器验证 |
 | 错误密码 | 错误密码 / 空值 | ⬜ 待浏览器验证 |
@@ -256,6 +295,9 @@ docker compose logs --tail=100
 
 第四天新增：
 
+- **同源代理只在 Vite 开发服务器下生效**（见 §4.7）。`pnpm build` 产出的静态 `dist/`
+  不带代理，生产部署需要由 Nginx 等反向代理把 `/api/copilotkit` 转到 Runtime，
+  或把 `VITE_COPILOT_RUNTIME_URL` 配成 Runtime 的绝对地址。
 - **错误分类靠字符串匹配**。`classifyChatError` 判断的是 `error.message` 里的关键字
   （`401`、`UPSTREAM_TIMEOUT`、`fetch failed` 等）。CopilotKit 或 AG-UI 升级后如果改了
   错误文案，分类会失配、落到 `unknown`。届时优先看 `console.warn` 打出的原始 code 与 message。

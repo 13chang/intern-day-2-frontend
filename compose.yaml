@@ -8,8 +8,9 @@ services:
     environment:
       # 浏览器访问的 API 基地址，需与后端 CORS 放行的来源一致
       VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:8000}"
-      # 浏览器访问的 CopilotKit Runtime 基地址
-      VITE_COPILOT_RUNTIME_URL: "${VITE_COPILOT_RUNTIME_URL:-http://localhost:4000/api/copilotkit}"
+      # Vite 同源代理的目标：compose 里 Runtime 是独立服务，用服务名访问。
+      # 浏览器不再直接访问 4000，也就不会和宿主机上别的容器抢这个端口。
+      RUNTIME_PROXY_TARGET: "http://runtime:4000"
     restart: unless-stopped
 
   # 第三天新增：CopilotKit Runtime。

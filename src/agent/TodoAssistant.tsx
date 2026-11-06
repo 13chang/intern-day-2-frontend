@@ -8,10 +8,13 @@ import type { AgentInfo, User } from '../types'
 import { classifyChatError, describeForConsole } from './chatError'
 import type { ChatError } from './chatError'
 
-// 浏览器访问的是宿主机映射出来的 Runtime 端口，不是容器内地址
+// 默认走同源路径，由 vite.config.ts 代理到 Runtime（浏览器只认 5173）。
+// 不再写死 http://localhost:4000：宿主机 4000 常被其它容器占用，VS Code 自动转发
+// 会顺延到 4001，写死端口就会连到别人的 Runtime（/info 里没有 todo-agent），
+// CopilotKit 判定 agent 未就绪，发送按钮会一直灰着。
+// 只有 Runtime 部署在独立域名下才需要用 VITE_COPILOT_RUNTIME_URL 覆盖成绝对地址。
 const RUNTIME_URL =
-  (import.meta.env.VITE_COPILOT_RUNTIME_URL as string | undefined) ??
-  'http://localhost:4000/api/copilotkit'
+  (import.meta.env.VITE_COPILOT_RUNTIME_URL as string | undefined) ?? '/api/copilotkit'
 
 // 必须和 server/index.mjs 里注册的 Agent 标识一致，否则 Runtime 找不到 Agent
 const AGENT_ID = 'todo-agent'
