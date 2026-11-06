@@ -7,6 +7,7 @@ import type {
   GenerateResult,
   LoginResponse,
   OperationResult,
+  OverviewResult,
   PostponeResult,
   SuggestConditionsPayload,
   SuggestResult,
@@ -160,14 +161,25 @@ export function saveActivitySettings(body: ActivitySettings): Promise<ActivitySe
   return request<ActivitySettings>('/activity/settings', { method: 'PUT', body })
 }
 
-export function fetchTodayActivities(): Promise<Activity[]> {
-  return request<Activity[]>('/activity/today')
+// 不传 day 就是今天。往前规划时前端把选中的日期传上来，
+// 后端会校验它落在 [今天, 今天+14 天] 里，越界返回 422 并说清原因。
+export function fetchDayActivities(day?: string): Promise<Activity[]> {
+  const query = day ? `?day=${day}` : ''
+  return request<Activity[]>(`/activity/today${query}`)
 }
 
-// force=true 用来"重建"：后端只清当天待执行的，已完成/已推迟/已跳过保留，周统计不会被打乱
-export function generateToday(force = false): Promise<GenerateResult> {
-  const query = force ? '?force=true' : ''
-  return request<GenerateResult>(`/activity/generate${query}`, { method: 'POST' })
+// 日期条用的数据：从今天起连续几天各排了几条，一次查完（后端一条 GROUP BY）
+export function fetchActivityOverview(days = 15): Promise<OverviewResult> {
+  return request<OverviewResult>(`/activity/overview?days=${days}`)
+}
+
+// force=true 用来"重建"：后端只清那天待执行的，已完成/已推迟/已跳过保留，周统计不会被打乱
+export function generateDay(force = false, day?: string): Promise<GenerateResult> {
+  const params = new URLSearchParams()
+  if (force) params.set('force', 'true')
+  if (day) params.set('day', day)
+  const query = params.toString()
+  return request<GenerateResult>(`/activity/generate${query ? `?${query}` : ''}`, { method: 'POST' })
 }
 
 export function completeActivity(id: number): Promise<OperationResult> {
@@ -203,6 +215,8 @@ export function suggestActivities(
     count?: number
     note?: string
     conditions?: SuggestConditionsPayload
+    // 目标日期（YYYY-MM-DD）。不传就是今天；传了才会排到那一天
+    day?: string
   } = {},
 ): Promise<SuggestResult> {
   return request<SuggestResult>('/activity/suggestions', { method: 'POST', body })

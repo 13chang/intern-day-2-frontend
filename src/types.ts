@@ -99,6 +99,9 @@ export type ActivityDraft = {
 }
 
 export type GenerateResult = {
+  // 这批安排写到了哪一天。页面上同时能看今天和未来几天，
+  // 不靠回显的话，客户端只能假设"就是刚才选的那天"
+  day: string
   created: number
   activities: Activity[]
   notice: string
@@ -119,6 +122,8 @@ export type SuggestResult = {
   explanation: string
   notice: string
   mode: string
+  // 这批建议是排给哪一天的（请求里传了 day 就原样回来，没传就是今天）
+  day: string
   // 模型给出、但被规则（免打扰/时段/冲突）丢掉的条数
   dropped: number
 }
@@ -160,5 +165,25 @@ export type SuggestConditionsPayload = {
 
 export type ConfirmResult = {
   saved: number
+  // 保存到了哪一天：可能是未来某天，页面据此决定刷新哪一天的列表
+  day: string
   activities: Activity[]
+}
+
+// 日期条上的一天。后端按天聚合，不是每天一个完整列表
+export type DayOverview = {
+  date: string
+  // 计划总数：只数原始条目，推迟产生的替代条目不重复计（和周统计同口径）
+  total: number
+  planned: number
+  completed: number
+  postponed: number
+  skipped: number
+}
+
+export type OverviewResult = {
+  today: string
+  // 最多能提前几天规划，由后端 rules.MAX_PLAN_DAYS 决定，前端不自己写死
+  max_plan_days: number
+  days: DayOverview[]
 }

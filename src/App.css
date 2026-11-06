@@ -847,6 +847,69 @@
   letter-spacing: -0.01em;
 }
 
+/* ---------- 日期条：今天往后两周 ---------- */
+
+.day-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  /* 横向滚动条在触控板上会挤占高度，收窄一点 */
+  scrollbar-width: thin;
+}
+
+/* 数据还没到时占位，避免加载完成时页面高度跳一下 */
+.day-strip--loading {
+  height: 62px;
+}
+
+.day-chip {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 1px;
+  justify-items: center;
+  min-width: 60px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.day-chip:hover {
+  border-color: #d3d7de;
+}
+
+.day-chip--active {
+  border-color: var(--accent);
+  background: var(--info-bg);
+}
+
+.day-chip__name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.day-chip__date {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.day-chip__count {
+  color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.day-chip__count--empty {
+  color: var(--muted);
+}
+
 /* ---------- 今日安排列表 ---------- */
 
 .activity-list {

@@ -14,7 +14,11 @@ type Props = {
   settings: ActivitySettings | null
   /** 后端告知哪些引擎能用（llm 需要 MODEL_MODE=real + 凭证） */
   engines: SuggestionEngineInfo[]
-  /** 保存成功：让页面重新拉「今日安排」和周统计，而不是本地插一条假装成功 */
+  /** 这批建议排给哪一天（YYYY-MM-DD）。不传日期就会排到今天，用户明明在看别的日子 */
+  day: string
+  /** 今天（YYYY-MM-DD）：用来区分"今天没有可用时段"和"这天没有可用时段" */
+  today: string
+  /** 保存成功：让页面重新拉当天的列表和周统计，而不是本地插一条假装成功 */
   onSaved: (savedCount: number) => void
   onError: (err: unknown, fallback: string) => void
 }
@@ -158,7 +162,14 @@ function validateConditions(form: SuggestConditions): ConditionProblem | null {
  * （免打扰、时段、已占用），所以模型说什么都不能绕过校验 ——
  * 这条对 DeepSeek 引擎同样成立，见 test_confirm_revalidates_llm_drafts。
  */
-export default function SuggestionPanel({ settings, engines, onSaved, onError }: Props) {
+export default function SuggestionPanel({
+  settings,
+  engines,
+  day,
+  today,
+  onSaved,
+  onError,
+}: Props) {
   const [suggestions, setSuggestions] = useState<ActivityDraft[] | null>(null)
   const [picked, setPicked] = useState<boolean[]>([])
   const [explanation, setExplanation] = useState('')
@@ -181,6 +192,16 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
     setSyncedSettings(settings)
     setConditions(emptyConditions(settings))
   }
+
+  // 换了日期就把上一次的建议整批清掉。那些草稿的 scheduled_at 都指向前一天，
+  // 留在屏幕上用户勾一下确认，会静默写到他已经不看的那一天去。
+  const [syncedDay, setSyncedDay] = useState(day)
+  if (day !== syncedDay) {
+    setSyncedDay(day)
+    clearResult()
+  }
+
+  const isToday = day === today
 
   const llmInfo = engines.find((item) => item.id === 'llm')
   const llmAvailable = Boolean(llmInfo?.available)
@@ -259,23 +280,24 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
     setErrorIndex(null)
     setNotice('')
     try {
-      const result = await suggestActivities(
-        showConditions
-          ? {
-              engine: 'llm',
-              count: conditions.count,
-              note: conditions.note.trim() || undefined,
-              conditions: {
-                work_start: conditions.work_start,
-                work_end: conditions.work_end,
-                windows: conditions.windows,
-                quiet_start: conditions.ignore_quiet || noQuiet ? null : conditions.quiet_start,
-                quiet_end: conditions.ignore_quiet || noQuiet ? null : conditions.quiet_end,
-                ignore_quiet: conditions.ignore_quiet || noQuiet,
-              },
-            }
-          : { engine: 'rule' },
-      )
+      // day 一定要带上：面板上排的是"当前选中那一天"，不是"今天"。
+      // 漏了这个字段，用户在看明天却拿到一批今天的建议，确认后写进今天。
+      const base = showConditions
+        ? {
+            engine: 'llm' as const,
+            count: conditions.count,
+            note: conditions.note.trim() || undefined,
+            conditions: {
+              work_start: conditions.work_start,
+              work_end: conditions.work_end,
+              windows: conditions.windows,
+              quiet_start: conditions.ignore_quiet || noQuiet ? null : conditions.quiet_start,
+              quiet_end: conditions.ignore_quiet || noQuiet ? null : conditions.quiet_end,
+              ignore_quiet: conditions.ignore_quiet || noQuiet,
+            },
+          }
+        : { engine: 'rule' as const }
+      const result = await suggestActivities({ ...base, day })
       setSuggestions(result.suggestions)
       setPicked(result.suggestions.map(() => true))
       setExplanation(result.explanation)
@@ -342,6 +364,9 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
     <section className="suggest-panel">
       <div className="suggest-panel__head">
         <h2 className="section-title">安排建议</h2>
+        {/* 不在今天时把目标日期写在按钮旁边：这一栏的结果会落在哪一天，
+            必须一眼能看出来，否则"建议明天"和"建议今天"长得一模一样 */}
+        {!isToday && <span className="hint hint--small">排给 {day.slice(5).replace('-', '/')}</span>}
         <button
           className="button button--ghost button--small"
           type="button"
@@ -567,7 +592,9 @@ export default function SuggestionPanel({ settings, engines, onSaved, onError }:
       {notice && !suggestions && <p className="banner banner--info">{notice}</p>}
 
       {suggestions && suggestions.length === 0 && (
-        <p className="hint state-line">今天没有剩余可用时段，可以调整时段或免打扰。</p>
+        <p className="hint state-line">
+          {isToday ? '今天' : '这天'}没有剩余可用时段，可以调整时段或免打扰。
+        </p>
       )}
 
       {suggestions && suggestions.length > 0 && (
