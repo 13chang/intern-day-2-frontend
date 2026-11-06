@@ -3,6 +3,7 @@ import {
   ApiError,
   completeActivity,
   fetchActivitySettings,
+  fetchSuggestionEngines,
   fetchTodayActivities,
   fetchWeeklyStats,
   generateToday,
@@ -16,7 +17,14 @@ import SettingsPanel from '../components/SettingsPanel'
 import SuggestionPanel from '../components/SuggestionPanel'
 import WeeklyStats from '../components/WeeklyStats'
 import TopBar from '../components/TopBar'
-import type { Activity, ActivitySettings, Tab, User, WeeklyStats as WeeklyStatsData } from '../types'
+import type {
+  Activity,
+  ActivitySettings,
+  SuggestionEngineInfo,
+  Tab,
+  User,
+  WeeklyStats as WeeklyStatsData,
+} from '../types'
 
 type Props = {
   user: User
@@ -35,6 +43,7 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
   const [activities, setActivities] = useState<Activity[]>([])
   const [settings, setSettings] = useState<ActivitySettings | null>(null)
   const [stats, setStats] = useState<WeeklyStatsData | null>(null)
+  const [engines, setEngines] = useState<SuggestionEngineInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -53,22 +62,26 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
   )
 
   /**
-   * 一次拉齐列表 / 设置 / 统计。
+   * 一次拉齐列表 / 设置 / 统计 / 可用引擎。
    *
    * 三个都要：列表决定显示什么，设置决定高亮哪一条（提醒开关），统计决定右上角数字。
+   * 引擎列表决定建议面板里能不能选 DeepSeek —— 这个只有后端知道（看 MODEL_MODE
+   * 和凭证配没配），让前端猜会出现"点了按钮才报错"。
    * 任何写操作完成后都重新拉，不本地改状态 —— 否则刷新页面就会和后端不一致。
    */
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [list, currentSettings, weekly] = await Promise.all([
+      const [list, currentSettings, weekly, engineList] = await Promise.all([
         fetchTodayActivities(),
         fetchActivitySettings(),
         fetchWeeklyStats(),
+        fetchSuggestionEngines(),
       ])
       setActivities(list)
       setSettings(currentSettings)
       setStats(weekly)
+      setEngines(engineList)
       setError('')
     } catch (err) {
       handleError(err, '加载今日安排失败')
@@ -192,6 +205,8 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
           )}
 
           <SuggestionPanel
+            settings={settings}
+            engines={engines}
             onError={handleError}
             onSaved={(count) => {
               setNotice(count > 0 ? `已保存 ${count} 条安排。` : '')

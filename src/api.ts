@@ -8,7 +8,10 @@ import type {
   LoginResponse,
   OperationResult,
   PostponeResult,
+  SuggestConditionsPayload,
   SuggestResult,
+  SuggestionEngine,
+  SuggestionEngineInfo,
   TodoItem,
   User,
   WeeklyStats,
@@ -186,8 +189,22 @@ export function fetchWeeklyStats(): Promise<WeeklyStats> {
   return request<WeeklyStats>('/activity/stats/weekly')
 }
 
+// 哪些引擎现在能用。llm 需要后端 MODEL_MODE=real 且配好凭证，
+// 所以必须问后端，不能在前端猜。
+export async function fetchSuggestionEngines(): Promise<SuggestionEngineInfo[]> {
+  const result = await request<{ engines: SuggestionEngineInfo[] }>('/activity/engines')
+  return result.engines
+}
+
 // 只算不存：返回的是草稿，用户点"确认保存"才走 confirmActivityDrafts
-export function suggestActivities(body: { count?: number; note?: string } = {}): Promise<SuggestResult> {
+export function suggestActivities(
+  body: {
+    engine?: SuggestionEngine
+    count?: number
+    note?: string
+    conditions?: SuggestConditionsPayload
+  } = {},
+): Promise<SuggestResult> {
   return request<SuggestResult>('/activity/suggestions', { method: 'POST', body })
 }
 

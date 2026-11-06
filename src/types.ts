@@ -119,6 +119,43 @@ export type SuggestResult = {
   explanation: string
   notice: string
   mode: string
+  // 模型给出、但被规则（免打扰/时段/冲突）丢掉的条数
+  dropped: number
+}
+
+// 生成建议的引擎：rule = 服务端规则算法，llm = DeepSeek 真实模型
+export type SuggestionEngine = 'rule' | 'llm'
+
+export type SuggestionEngineInfo = {
+  id: SuggestionEngine
+  label: string
+  // 后端是否具备调用条件（llm 需要 MODEL_MODE=real 且配好凭证）
+  available: boolean
+  model: string | null
+  reason: string
+}
+
+// 建议面板里的条件表单。只对这一次生成生效，不写回 /activity/settings
+export type SuggestConditions = {
+  work_start: string
+  work_end: string
+  windows: ActivityWindow[]
+  quiet_start: string
+  quiet_end: string
+  // 勾上就用"本次不考虑免打扰"代替上面两个时间
+  ignore_quiet: boolean
+  count: number
+  note: string
+}
+
+// 发给后端的形状：表单里空字符串表示"没填"，接口上要传 null 才表示"没有免打扰"
+export type SuggestConditionsPayload = {
+  work_start: string
+  work_end: string
+  windows: ActivityWindow[]
+  quiet_start: string | null
+  quiet_end: string | null
+  ignore_quiet: boolean
 }
 
 export type ConfirmResult = {
