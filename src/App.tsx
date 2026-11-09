@@ -1,3 +1,5 @@
+import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { clearToken, fetchMe, logout as logoutRequest, readToken, saveToken } from './api'
@@ -45,6 +47,26 @@ function App() {
       active = false
     }
   }, [])
+
+  // Android 返回键：本项目没有 react-router，页签靠 tab 状态切换，
+  // WebView 里没有 history 可退。不拦截的话按一次返回就把 App 关掉，
+  // 用户会当成闪退。约定改为：不在「活动助手」页签时先切回去，
+  // 已经在活动助手（或停在登录页）时再按一次才真正退出。
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+
+    const handle = CapacitorApp.addListener('backButton', () => {
+      if (phase === 'authenticated' && tab !== 'activity') {
+        setTab('activity')
+        return
+      }
+      void CapacitorApp.exitApp()
+    })
+
+    return () => {
+      void handle.then((listener) => listener.remove())
+    }
+  }, [phase, tab])
 
   const handleAuthenticated = useCallback((token: string, nextUser: User) => {
     saveToken(token)

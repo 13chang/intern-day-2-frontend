@@ -3,7 +3,11 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 48px 20px;
+  /* targetSdk 36 → Android 15 起强制 edge-to-edge，WebView 会铺到状态栏和手势条
+     下面。用安全区把内容让出来；浏览器里 env() 恒为 0，不影响 Web 版。
+     用 calc 叠加原来的留白，而不是直接覆盖，避免改变现有间距。 */
+  padding: calc(48px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+    calc(48px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
 }
 
 .screen--center {
@@ -25,7 +29,9 @@
   min-height: 100%;
   display: grid;
   place-items: center;
-  padding: 40px 20px;
+  /* 同 .screen：给状态栏与底部手势条留出安全区 */
+  padding: calc(40px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+    calc(40px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
   background:
     radial-gradient(1100px 520px at 12% -10%, #e8f0ff 0%, rgba(232, 240, 255, 0) 60%),
     radial-gradient(900px 460px at 100% 110%, #e6f7f2 0%, rgba(230, 247, 242, 0) 55%),

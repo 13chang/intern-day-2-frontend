@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover 必须写上，否则 env(safe-area-inset-*) 在 Android WebView 里恒为 0 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>待办清单 · 登录练习</title>
   </head>
   <body>
