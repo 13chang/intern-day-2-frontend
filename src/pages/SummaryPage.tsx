@@ -112,11 +112,19 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
         const data = await fetchDailySummary(day)
         setSummary(data)
         setError('')
-        // 结果已经落地（成功或失败都算），就不用再追着刷新了
-        if (data.status === 'ready' || data.status === 'failed') {
+        // ready 一定是这次的新结果。failed 要分开看：
+        // 刚点完「重试」那次查询（pollTicks 还是 0）读到的很可能还是上一轮的 failed，
+        // 据此收工的话，页面会一直停在"生成失败"，用户以为重试没生效。
+        // 等轮询过一轮（pollTicks > 0）再遇到 failed，才算这次真的又失败了。
+        const settled =
+          data.status === 'ready' || (data.status === 'failed' && pollTicks.current > 0)
+        if (settled) {
           setAwaiting(false)
           pollTicks.current = 0
           setStalled(false)
+          // 结果已经落地，"已提交 / 正在生成"这类过渡提示就过期了，
+          // 留着会和正文里的"生成失败"或日报内容并列，读起来互相打架
+          setNotice('')
         }
       } catch (err) {
         handleError(err, '加载日报失败')
@@ -132,9 +140,17 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
   }, [load])
 
   const status = summary?.status ?? 'missing'
-  // missing 也要继续轮询，但只在"刚提交过任务"的那段时间里
+  /**
+   * 提交过任务、结果还没落地 —— 这段时间里 missing / failed 也要继续轮询。
+   *
+   * 只看 `status === 'generating'` 是不够的：任务刚入队时 Worker 还没领取，
+   * 接口返回的还是 missing（首次生成）或 failed（点重试之后），页面会停在原地不动。
+   * ready 是终态，一旦拿到就没必要再盯。
+   */
   const shouldPoll =
-    status === 'generating' || status === 'pending' || (awaiting && status === 'missing')
+    status === 'generating' ||
+    status === 'pending' ||
+    (awaiting && status !== 'ready')
 
   // 轮询：靠 summary 这个依赖把自己接下去。
   // 如果只依赖 status 字符串，generating → generating 不算变化，effect 不会重跑，
@@ -177,14 +193,16 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
       const result = await runDailySummary(day)
       if (result.status === 'ready') {
         setNotice('这一天已经有日报了，不用再生成。')
-      } else if (result.status === 'deduplicated') {
-        setNotice(result.message || '刚提交过一次，请等任务执行完再刷新。')
-      } else if (result.status === 'generating') {
-        // 后端在宽限期内认为任务还活着：这里不要假装重新提交了
-        setNotice(result.message || '正在生成，稍等一会儿再刷新。')
-        setAwaiting(true)
       } else {
-        setNotice('已提交到后台队列，生成完成后会自动显示。')
+        if (result.status === 'deduplicated') {
+          setNotice(result.message || '刚提交过一次，请等任务执行完再刷新。')
+        } else if (result.status === 'generating') {
+          // 后端在宽限期内认为任务还活着：这里不要假装重新提交了
+          setNotice(result.message || '正在生成，稍等一会儿再刷新。')
+        }
+        // queued 不额外弹提示：正文的状态行已经写着"任务已提交，正在等待后台处理…"，
+        // 再来一条横幅就是同一句话说两遍。
+        // deduplicated 也置位：这说明任务已经在队列里，页面同样该盯着它。
         setAwaiting(true)
       }
       setStalled(false)
@@ -206,14 +224,18 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
   // 按钮文案跟着当前状态走，一个按钮把"生成 / 重试 / 等它跑完"三种语义说清
   let runLabel = '立即生成'
   if (running) runLabel = '提交中…'
+  else if (status === 'ready') runLabel = '已生成'
+  else if (awaiting) runLabel = '等待中…'
   else if (status === 'generating' || status === 'pending') runLabel = '生成中…'
   else if (status === 'failed') runLabel = '重试'
-  else if (status === 'ready') runLabel = '已生成'
 
-  // 这三种状态下按钮只是"状态指示"，没有可执行的动作，用浅色样式
-  const runQuiet = status === 'ready' || status === 'generating' || status === 'pending'
+  // 这些状态下按钮只是"状态指示"，没有可执行的动作，用浅色样式。
+  // awaiting 也算：刚提交完那几秒再点一次，后端会用分钟级的任务标识挡回来，
+  // 与其让用户点一个注定被去重的按钮，不如直接锁住。
+  const runQuiet =
+    status === 'ready' || status === 'generating' || status === 'pending' || awaiting
 
-  const runDisabled = running || status === 'ready' || status === 'generating' || status === 'pending'
+  const runDisabled = running || runQuiet
 
   return (
     <main className="screen screen--wide screen--stack">
@@ -251,7 +273,7 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
               className={runQuiet ? 'button button--ghost' : 'button button--primary'}
               type="button"
               onClick={() => void handleRun()}
-              disabled={runDisabled && !running}
+              disabled={runDisabled}
               title={
                 status === 'ready'
                   ? '已有日报，不需要再生成'
@@ -288,15 +310,23 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
               : '正在生成…（每 3 秒自动刷新）'}
           </p>
         ) : status === 'failed' ? (
-          <div className="summary-failed" role="status">
-            <p className="banner banner--warn">
-              生成失败：{summary?.error_message || '原因未记录'}。
+          awaiting ? (
+            // 刚点过重试：库里那条 failed 是上一轮留下的，这一刻还展示失败原因，
+            // 看起来就像"重试没生效"。等 Worker 把状态改成 generating 再切回去。
+            <p className="hint state-line" aria-live="polite">
+              已重新提交，正在等待后台结果…
             </p>
-            <p className="hint">
-              后台已经按策略试过若干次。点右上角「重试」可以重新提交一次；如果一直失败，
-              多半是模型配置或网络的问题，不是当天的数据有问题。
-            </p>
-          </div>
+          ) : (
+            <div className="summary-failed" role="status">
+              <p className="banner banner--warn">
+                生成失败：{summary?.error_message || '原因未记录'}。
+              </p>
+              <p className="hint">
+                后台已经按策略试过若干次。点右上角「重试」可以重新提交一次；如果一直失败，
+                多半是模型配置或网络的问题，不是当天的数据有问题。
+              </p>
+            </div>
+          )
         ) : summary ? (
           <SummaryCard summary={summary} />
         ) : null}
