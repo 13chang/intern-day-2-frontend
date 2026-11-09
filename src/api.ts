@@ -1,4 +1,18 @@
-import type { AgentInfo, LoginResponse, TodoItem, User } from './types'
+import type {
+  Activity,
+  ActivitySettings,
+  AgentInfo,
+  GenerateResult,
+  LoginResponse,
+  OperationResult,
+  OverviewResult,
+  PostponeResult,
+  SuggestionEngine,
+  SuggestionEngineInfo,
+  TodoItem,
+  User,
+  WeeklyStats,
+} from './types'
 
 const BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
@@ -128,4 +142,73 @@ export function removeItem(id: number): Promise<void> {
 // 也用来确认后端 Agent 端点确实挂了（未登录会被 401 挡掉）。
 export function fetchAgentInfo(): Promise<AgentInfo> {
   return request<AgentInfo>('/agent/info')
+}
+
+// ---------- 第五天：久坐活动助手 ----------
+//
+// 全部沿用上面的 request<T>()：错误统一抛 ApiError，message 就是后端 detail 里的中文。
+// 页面只负责显示 message，不再自己拼错误文案。
+
+export function fetchActivitySettings(): Promise<ActivitySettings> {
+  return request<ActivitySettings>('/activity/settings')
+}
+
+export function saveActivitySettings(body: ActivitySettings): Promise<ActivitySettings> {
+  return request<ActivitySettings>('/activity/settings', { method: 'PUT', body })
+}
+
+// 不传 day 就是今天。往前规划时前端把选中的日期传上来，
+// 后端会校验它落在 [今天, 今天+14 天] 里，越界返回 422 并说清原因。
+export function fetchDayActivities(day?: string): Promise<Activity[]> {
+  const query = day ? `?day=${day}` : ''
+  return request<Activity[]>(`/activity/today${query}`)
+}
+
+// 日期条用的数据：从今天起连续几天各排了几条，一次查完（后端一条 GROUP BY）
+export function fetchActivityOverview(days = 15): Promise<OverviewResult> {
+  return request<OverviewResult>(`/activity/overview?days=${days}`)
+}
+
+// force=true 用来"重建"：后端只清那天待执行的，已完成/已推迟/已跳过保留，周统计不会被打乱。
+// engine 决定由谁排：rule=本地规则（不联网），llm=DeepSeek 真实模型。
+// 两条路后端都会写库，也都过同一套 validate_slot —— 选模型不等于可以绕过免打扰和冲突。
+export function generateDay(
+  force = false,
+  day?: string,
+  options: { engine?: SuggestionEngine; note?: string } = {},
+): Promise<GenerateResult> {
+  const params = new URLSearchParams()
+  if (force) params.set('force', 'true')
+  if (day) params.set('day', day)
+  const query = params.toString()
+  return request<GenerateResult>(`/activity/generate${query ? `?${query}` : ''}`, {
+    method: 'POST',
+    body: { engine: options.engine ?? 'rule', note: options.note ?? null },
+  })
+}
+
+export function completeActivity(id: number): Promise<OperationResult> {
+  return request<OperationResult>(`/activity/${id}/complete`, { method: 'POST' })
+}
+
+export function postponeActivity(id: number): Promise<PostponeResult> {
+  return request<PostponeResult>(`/activity/${id}/postpone`, { method: 'POST' })
+}
+
+export function skipActivity(id: number, reason?: string): Promise<OperationResult> {
+  return request<OperationResult>(`/activity/${id}/skip`, {
+    method: 'POST',
+    body: { reason: reason ?? null },
+  })
+}
+
+export function fetchWeeklyStats(): Promise<WeeklyStats> {
+  return request<WeeklyStats>('/activity/stats/weekly')
+}
+
+// 哪些引擎现在能用。llm 需要后端 MODEL_MODE=real 且配好凭证，
+// 所以必须问后端，不能在前端猜。
+export async function fetchSuggestionEngines(): Promise<SuggestionEngineInfo[]> {
+  const result = await request<{ engines: SuggestionEngineInfo[] }>('/activity/engines')
+  return result.engines
 }
