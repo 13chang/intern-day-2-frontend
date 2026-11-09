@@ -12,6 +12,7 @@ import {
   skipActivity,
 } from '../api'
 import ActivityAssistant from '../agent/ActivityAssistant'
+import AssistantBoundary from '../components/AssistantBoundary'
 import ActivityCard from '../components/ActivityCard'
 import type { ActivityAction } from '../components/ActivityCard'
 import DayStrip from '../components/DayStrip'
@@ -339,7 +340,9 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
           <WeeklyStats stats={stats} />
         </div>
 
-        <ActivityAssistant user={user} onExpired={onExpired} />
+        <AssistantBoundary>
+          <ActivityAssistant user={user} onExpired={onExpired} />
+        </AssistantBoundary>
       </div>
     </main>
   )

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ApiError, createItem, listItems, removeItem, setItemDone } from '../api'
 import TodoAssistant from '../agent/TodoAssistant'
+import AssistantBoundary from '../components/AssistantBoundary'
 import TopBar from '../components/TopBar'
 import type { Tab, TodoItem, User } from '../types'
 
@@ -107,7 +108,9 @@ export default function TodoPage({ user, onLogout, onExpired, onTabChange }: Pro
 
       <div className="workspace">
         {/* 聊天区放主栏：它是这页的主角，待办列表退成右侧栏 */}
-        <TodoAssistant user={user} onExpired={onExpired} />
+        <AssistantBoundary>
+          <TodoAssistant user={user} onExpired={onExpired} />
+        </AssistantBoundary>
 
         <div className="panel">
           <header className="panel__header">
