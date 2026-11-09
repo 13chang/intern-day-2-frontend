@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core'
 import type {
   Activity,
   ActivitySettings,
@@ -16,8 +17,18 @@ import type {
   WeeklyStats,
 } from './types'
 
+// 后端地址按运行环境取默认值，优先级从高到低：
+// 1. 构建时注入的 VITE_API_BASE_URL —— 实体机联调用局域网 IP，例如
+//    VITE_API_BASE_URL=http://192.168.1.20:8000 pnpm build
+// 2. Capacitor 原生平台 —— Android 模拟器里只有 10.0.2.2 指向宿主机，
+//    localhost 指的是模拟器自己，所以不能沿用浏览器那套默认值
+// 3. 浏览器 / vite dev —— 直接访问宿主机映射出来的端口
+const NATIVE_DEFAULT_BASE_URL = 'http://10.0.2.2:8000'
+const WEB_DEFAULT_BASE_URL = 'http://localhost:8000'
+
 const BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:8000'
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+  (Capacitor.isNativePlatform() ? NATIVE_DEFAULT_BASE_URL : WEB_DEFAULT_BASE_URL)
 
 const TOKEN_KEY = 'intern-day-2:token'
 

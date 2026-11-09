@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core'
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { CopilotChat, CopilotKitProvider, useAgent } from '@copilotkit/react-core/v2'
@@ -13,8 +14,14 @@ import type { ChatError } from './chatError'
 // 会顺延到 4001，写死端口就会连到别人的 Runtime（/info 里没有 todo-agent），
 // CopilotKit 判定 agent 未就绪，发送按钮会一直灰着。
 // 只有 Runtime 部署在独立域名下才需要用 VITE_COPILOT_RUNTIME_URL 覆盖成绝对地址。
+// 原生 App 里没有 vite 代理：相对路径会打到 WebView 自己的资源服务器，拿到 404。
+// 必须用绝对地址指向宿主机的 Runtime；只有模拟器里 10.0.2.2 才指向宿主机。
+// 实体机联调用 VITE_COPILOT_RUNTIME_URL 覆盖成局域网地址。
+const NATIVE_RUNTIME_URL = 'http://10.0.2.2:4000/api/copilotkit'
+
 const RUNTIME_URL =
-  (import.meta.env.VITE_COPILOT_RUNTIME_URL as string | undefined) ?? '/api/copilotkit'
+  (import.meta.env.VITE_COPILOT_RUNTIME_URL as string | undefined) ??
+  (Capacitor.isNativePlatform() ? NATIVE_RUNTIME_URL : '/api/copilotkit')
 
 // 必须和 server/index.mjs 里注册的 Agent 标识一致，否则 Runtime 找不到 Agent。
 // 注意：后端 app/agent/factory.py 的 AGENT_NAME 是另一回事（只用于 /agent/info 展示），
