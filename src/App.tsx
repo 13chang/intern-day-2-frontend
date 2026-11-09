@@ -68,6 +68,13 @@ function App() {
     }
   }, [phase, tab])
 
+  // 切页签时回到页面顶部。手机上页面一长就滚得很远，切过去还停在半截，
+  // 顶栏和标题都滚出了视野，看起来像"页面少了头部"。
+  // 桌面浏览器很少滚这么深，所以这个现象只在手机上明显。
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [tab])
+
   const handleAuthenticated = useCallback((token: string, nextUser: User) => {
     saveToken(token)
     setUser(nextUser)
