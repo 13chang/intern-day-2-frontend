@@ -29,7 +29,7 @@ export type AgentInfo = {
 
 // ---------- 第五天：久坐活动助手 ----------
 
-export type Tab = 'activity' | 'todo'
+export type Tab = 'activity' | 'todo' | 'summary'
 
 // 四个字面量与后端 ActivityOut.status 一一对应，
 // 少写一个就会在状态徽标那里漏掉分支（tsc 会报 exhaustive 相关的错）。
@@ -143,4 +143,50 @@ export type OverviewResult = {
   // 最多能提前几天规划，由后端 rules.MAX_PLAN_DAYS 决定，前端不自己写死
   max_plan_days: number
   days: DayOverview[]
+}
+
+// ---------- 第六天：每日总结 ----------
+//
+// 与后端 app/routers/summary.py 的 SummaryOut 一一对应。
+// 页面上有五种状态，missing 表示"这一天还没有日报"（后端返回 200，不是 404），
+// 所以 status 不能省成 ready | failed 两种 —— 少一种页面就会把"没生成"画成"出错"。
+
+export type SummaryStatus = 'missing' | 'pending' | 'generating' | 'ready' | 'failed'
+
+export type DailySummary = {
+  date: string
+  status: SummaryStatus
+
+  // 统计数字一律照抄后端。前端不做任何加减 —— 口径只在后端一份，
+  // 不然"完成数可能大于计划数"这种规则迟早两边对不上。
+  planned_total: number
+  completed: number
+  skipped: number
+  unfinished: number
+  // 推迟**操作**次数，不是活动条数；不能和 completed 相加当总数
+  postpone_ops: number
+  // 恒为 null：本项目没有自报久坐时长的入口。页面写"未记录"，不写 0 分钟
+  sedentary_minutes: number | null
+  has_records: boolean
+
+  review: string | null
+  suggestion: string | null
+  // rule = 本地模板（离线可用），llm = DeepSeek 真实模型
+  source: 'rule' | 'llm' | null
+  model: string | null
+  generated_at: string | null
+
+  error_code: string | null
+  error_message: string | null
+}
+
+// POST /summary/run 的返回。**只表示入队情况，不表示已经生成好了。**
+export type SummaryRunStatus = 'ready' | 'generating' | 'queued' | 'deduplicated'
+
+export type SummaryRunResult = {
+  date: string
+  queued: boolean
+  status: SummaryRunStatus
+  job_id: string | null
+  message: string
 }

@@ -2,11 +2,13 @@ import type {
   Activity,
   ActivitySettings,
   AgentInfo,
+  DailySummary,
   GenerateResult,
   LoginResponse,
   OperationResult,
   OverviewResult,
   PostponeResult,
+  SummaryRunResult,
   SuggestionEngine,
   SuggestionEngineInfo,
   TodoItem,
@@ -211,4 +213,24 @@ export function fetchWeeklyStats(): Promise<WeeklyStats> {
 export async function fetchSuggestionEngines(): Promise<SuggestionEngineInfo[]> {
   const result = await request<{ engines: SuggestionEngineInfo[] }>('/activity/engines')
   return result.engines
+}
+
+// ---------- 第六天：每日总结 ----------
+//
+// 两个接口都不做本地缓存：任务书要求「刷新后读取服务端保存的日报」，
+// 存进 localStorage 只会让人看到一份和后端不一致的旧数字。
+
+// 不传 day 就是昨天。后端把"这一天还没生成"当成 200 + status="missing"，
+// 所以"没有日报"不会抛错，页面按 status 分支画不同状态即可。
+export function fetchDailySummary(day?: string): Promise<DailySummary> {
+  return request<DailySummary>(`/summary${day ? `?day=${day}` : ''}`)
+}
+
+// **只入队，不等模型**：返回时任务通常还没开始跑。
+// 200 里也可能带 status=ready / generating / deduplicated（都不是失败），
+// 只有 Redis 挂了才是 503，那种情况由 request() 抛 ApiError。
+export function runDailySummary(day?: string): Promise<SummaryRunResult> {
+  return request<SummaryRunResult>(`/summary/run${day ? `?day=${day}` : ''}`, {
+    method: 'POST',
+  })
 }
