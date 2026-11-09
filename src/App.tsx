@@ -3,6 +3,7 @@ import './App.css'
 import { clearToken, fetchMe, logout as logoutRequest, readToken, saveToken } from './api'
 import ActivityPage from './pages/ActivityPage'
 import LoginPage from './pages/LoginPage'
+import SummaryPage from './pages/SummaryPage'
 import TodoPage from './pages/TodoPage'
 import type { Tab, User } from './types'
 
@@ -93,23 +94,27 @@ function App() {
     )
   }
 
-  // 两个页面共用同一份登录态；页签切换不卸载登录状态，
+  // 三个页面共用同一份登录态；页签切换不卸载登录状态，
   // 各自的列表由页面自己重新拉，切回来时不会看到过期数据。
-  return tab === 'activity' ? (
-    <ActivityPage
-      user={user}
-      onLogout={handleLogout}
-      onExpired={handleExpired}
-      onTabChange={setTab}
-    />
-  ) : (
-    <TodoPage
-      user={user}
-      onLogout={handleLogout}
-      onExpired={handleExpired}
-      onTabChange={setTab}
-    />
-  )
+  //
+  // 用 if 而不是嵌套三元：页签从两个变成三个后，`a ? <A/> : b ? <B/> : <C/>`
+  // 的缩进已经看不下去了，再加第四个页签时改起来更容易出错。
+  //
+  // currentUser 走参数而不是直接用外层的 user：函数体里 TS 不做跨函数收窄，
+  // 上面那个 `if (!user) return` 管不到这里，user 仍被当成 User | null。
+  function renderPage(currentUser: User) {
+    const common = {
+      user: currentUser,
+      onLogout: handleLogout,
+      onExpired: handleExpired,
+      onTabChange: setTab,
+    }
+    if (tab === 'activity') return <ActivityPage {...common} />
+    if (tab === 'summary') return <SummaryPage {...common} />
+    return <TodoPage {...common} />
+  }
+
+  return renderPage(user)
 }
 
 export default App
