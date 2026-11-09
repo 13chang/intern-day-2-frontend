@@ -1,1 +1,6 @@
 * text=auto eol=lf
+
+# Windows 批处理必须保持 CRLF：Gradle wrapper 的 bat 被转成 LF 后，
+# 在 Windows 上 cmd 解析会出各种奇怪问题（列出的规则覆盖上面的 * 规则）。
+*.bat text eol=crlf
+*.cmd text eol=crlf

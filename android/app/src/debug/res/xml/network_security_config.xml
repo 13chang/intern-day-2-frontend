@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅 debug 构建生效：Android 9（API 28）起默认禁止明文 HTTP，
+  App 连本机后端 http://10.0.2.2:8000 会被网络安全策略直接拦掉，
+  报错信息只有一句含糊的 "Failed to fetch"。
+
+  10.0.2.2 是 Android 模拟器里指向宿主机的固定地址；实体机联调时
+  把它换成开发机的局域网 IP（同时用 VITE_API_BASE_URL 改前端地址）。
+
+  release 构建不会合并这个文件，生产包仍然保持默认的「禁止明文」。
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
