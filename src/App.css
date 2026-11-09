@@ -1548,3 +1548,92 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* ---------- 第六天：每日总结 ---------- */
+
+/* 单栏页面，.screen--wide 下 panel 会贴左，这里拉回中间 */
+.summary-panel {
+  margin: 0 auto;
+}
+
+.summary-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 四个数字和活动页的周统计同一套视觉（.stat），只换网格容器：
+   直接复用 .stats__numbers 会把总结页绑在周统计的组件结构上 */
+.summary-numbers {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.summary-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.summary-card__sep {
+  color: #c9ccd4;
+}
+
+/* 回顾与建议分块显示：两段话并排会读串，尤其模型偶尔写得比较长 */
+.summary-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f7f8fa;
+}
+
+.summary-block__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.summary-block__text {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.summary-card__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.summary-failed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (max-width: 520px) {
+  .summary-numbers {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summary-card__foot {
+    flex-direction: column;
+    gap: 2px;
+  }
+}
