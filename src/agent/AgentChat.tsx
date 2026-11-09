@@ -16,8 +16,10 @@ import type { ChatError } from './chatError'
 // 只有 Runtime 部署在独立域名下才需要用 VITE_COPILOT_RUNTIME_URL 覆盖成绝对地址。
 // 原生 App 里没有 vite 代理：相对路径会打到 WebView 自己的资源服务器，拿到 404。
 // 必须用绝对地址指向宿主机的 Runtime；只有模拟器里 10.0.2.2 才指向宿主机。
+// 端口是 4123 而不是 4000：宿主机 4000 常被别的项目占用（见 compose.yaml 里
+// runtime 服务的端口映射），容器内仍监听 4000，宿主机侧对外是 4123。
 // 实体机联调用 VITE_COPILOT_RUNTIME_URL 覆盖成局域网地址。
-const NATIVE_RUNTIME_URL = 'http://10.0.2.2:4000/api/copilotkit'
+const NATIVE_RUNTIME_URL = 'http://10.0.2.2:4123/api/copilotkit'
 
 const RUNTIME_URL =
   (import.meta.env.VITE_COPILOT_RUNTIME_URL as string | undefined) ??

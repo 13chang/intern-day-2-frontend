@@ -26,7 +26,10 @@ const AGENT_ID = process.env.AGENT_ID ?? "todo-agent";
 // 容器里访问宿主机映射端口，靠 compose 里的 host.docker.internal:host-gateway
 const AGENT_URL = process.env.AGENT_URL ?? "http://localhost:8000/agent";
 const BASE_PATH = process.env.COPILOT_BASE_PATH ?? "/api/copilotkit";
-const DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173";
+// 浏览器来源 + Capacitor App 的 WebView 来源（http://localhost，不带端口）。
+// 后者漏了的话，App 里 AgentChat 拉 /info 会被 CORS 拦掉，整块区域没有响应。
+const DEFAULT_ORIGINS =
+  "http://localhost:5173,http://127.0.0.1:5173,http://localhost";
 const ALLOWED_ORIGINS = (process.env.RUNTIME_CORS_ORIGINS ?? DEFAULT_ORIGINS)
   .split(",")
   .map((origin) => origin.trim())

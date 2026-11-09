@@ -21,7 +21,10 @@ services:
     container_name: intern-day-2-runtime
     command: ["node", "server/index.mjs"]
     ports:
-      - "4000:4000"
+      # 宿主机 4000 常被别的项目占用（这台机器上是 agentdemo 的 Runtime），
+      # 直接映射 4000 会让本服务起不来。容器内仍监听 4000，只把宿主机侧换成 4123；
+      # Android App 里用 10.0.2.2:4123 访问。
+      - "4123:4000"
     environment:
       PORT: "4000"
       # 必须和前端 CopilotKitProvider 的 agentId 一致
@@ -29,7 +32,8 @@ services:
       # 后端属于另一个 Compose 项目，服务名不能互相解析，
       # 所以走 compose 的 host-gateway 访问宿主机映射出来的 8000 端口
       AGENT_URL: "${AGENT_URL:-http://host.docker.internal:8000/agent}"
-      RUNTIME_CORS_ORIGINS: "${RUNTIME_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+      # 除了浏览器来源，还要放行 Capacitor App 的 WebView 来源（http://localhost，不带端口）
+      RUNTIME_CORS_ORIGINS: "${RUNTIME_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost}"
       # 上游多久没有输出就主动结束本次运行，避免后端假死时页面一直转圈
       STREAM_IDLE_TIMEOUT_MS: "${STREAM_IDLE_TIMEOUT_MS:-20000}"
       # 练习项目不需要把使用数据发到第三方，默认关掉
