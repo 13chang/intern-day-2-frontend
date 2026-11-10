@@ -1244,14 +1244,19 @@
    两个选项都常见，多一次点击没必要；不可用时要能直接显示"未启用"。 */
 .engine-picker {
   display: flex;
-  gap: 8px;
   flex-wrap: wrap;
+}
+
+/* 间距统一用 margin 而不是 gap：flex 的 gap 要 Chrome 84 起才支持，
+   Android 10 自带的 WebView 74 会忽略它，两个引擎芯片直接贴成一块。
+   用 margin 后新旧内核表现一致，不会因为 gap 叠加变成两倍间距。 */
+.engine-picker > * + * {
+  margin-left: 8px;
 }
 
 .engine-option {
   display: flex;
   align-items: baseline;
-  gap: 6px;
   padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1285,6 +1290,8 @@
   font-size: 11.5px;
   color: var(--muted);
   font-weight: 400;
+  /* 同上，老内核没有 flex gap，不补这段会和引擎名连成 "DeepSeekdeepseek-chat" */
+  margin-left: 6px;
 }
 
 .engine-option--active .engine-option__meta {
