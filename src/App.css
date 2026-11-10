@@ -1223,6 +1223,82 @@
   gap: 8px;
 }
 
+/* ---------- 规则清单（第八天 R1-3） ----------
+   间距一律用 margin，不用 flex 的 gap：API 29 出厂 WebView 是 Chrome 74，
+   flex 容器的 gap 要 Chrome 84 才有，用了会在真机上静默失效（元素连成一串）。 */
+
+.hint--warn {
+  color: #9a6b12;
+}
+
+.rulestack {
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.rulestack__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.rulestack__head > * + * {
+  margin-left: 8px;
+}
+
+.rulestack__list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.rule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.rule:last-child {
+  border-bottom: 0;
+}
+
+.rule__name {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 96px;
+  /* 必须有右边距：名称最长的那条（「与已有安排的间隔」）会超过 min-width，
+     撑满后边界值紧贴着它，两段字连成一句读不断。 */
+  margin-right: 10px;
+}
+
+.rule__boundary {
+  color: var(--accent-strong);
+  margin-right: 8px;
+  /* 多个时段拼起来的边界很长，窄屏上必须能断行，否则整页出现横向滚动条 */
+  overflow-wrap: anywhere;
+}
+
+.rule__tag {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+  margin-right: 8px;
+}
+
+.rule__summary {
+  /* 说明独占一行：和名称、边界挤在一行时谁都读不清，而且窄屏会重叠 */
+  flex: 1 1 100%;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 /* ---------- 建议草稿 ---------- */
 
 .suggest-panel {

@@ -190,3 +190,70 @@ export type SummaryRunResult = {
   job_id: string | null
   message: string
 }
+
+// ---------- 第八天：时间规则 ----------
+
+// 与后端 rules.py 的规则码一一对应。写成联合类型而不是 string：
+// 后端加一条规则时，这里的映射表（src/rules.ts）会因缺键而编译报错，
+// 而不是安静地渲染出一行空名字。
+export type RuleCode =
+  | 'PLAN_HORIZON'
+  | 'WORK_WINDOW'
+  | 'ACTIVE_WINDOW'
+  | 'QUIET_HOURS'
+  | 'MIN_GAP'
+  | 'DAILY_TARGET'
+
+export type ActivityRule = {
+  code: RuleCode
+  name: string
+  summary: string
+  // 判定顺序，小的先判。决定"先报哪句提示"，不是重要性
+  priority: number
+  // false = 只解释不拦截（目前只有每日次数）
+  blocking: boolean
+  // 人话边界，例如 "09:00-18:00"、"10:00-12:00、14:00-17:30"
+  boundary: string
+  params: Record<string, unknown>
+}
+
+export type SlotRange = {
+  start: string
+  end: string
+}
+
+// GET /activity/rules 与 POST /activity/rules/preview 的共同返回。
+// 三个区间都由后端算：前端自己按字符串切会和后端漂，而且漂了不报错。
+export type ActivityRuleset = {
+  day: string
+  rules: ActivityRule[]
+  work_window: SlotRange
+  // 可活动时段 ∩ 工作时段
+  allowed_ranges: SlotRange[]
+  quiet_ranges: SlotRange[]
+  // 再扣掉免打扰、已有安排、已经过去的时间
+  free_ranges: SlotRange[]
+  // 边界算不出来时的原因（例如工作时段与时段没有重叠）；正常为空串
+  notice: string
+}
+
+export type RuleCheck = {
+  code: RuleCode
+  name: string
+  priority: number
+  blocking: boolean
+  passed: boolean
+  // 通过时是"为什么可以"，不通过时就是给用户看的那句错误
+  detail: string
+  error_code: string | null
+}
+
+// GET /activity/explain 的返回：六条规则各判一次，不只到第一条失败
+export type SlotExplanation = {
+  at: string
+  allowed: boolean
+  rule_code: RuleCode | null
+  error_code: string | null
+  reason: string
+  checks: RuleCheck[]
+}

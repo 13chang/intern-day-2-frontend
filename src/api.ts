@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import type {
   Activity,
+  ActivityRuleset,
   ActivitySettings,
   AgentInfo,
   DailySummary,
@@ -9,6 +10,7 @@ import type {
   OperationResult,
   OverviewResult,
   PostponeResult,
+  SlotExplanation,
   SummaryRunResult,
   SuggestionEngine,
   SuggestionEngineInfo,
@@ -34,11 +36,21 @@ const TOKEN_KEY = 'intern-day-2:token'
 
 export class ApiError extends Error {
   readonly status: number
+  /**
+   * 违反了哪条时间规则（后端 ``X-Rule-Code`` 响应头）。
+   *
+   * 有这个码，调用方就能说"去改工作时段"而不是只显示一句中文；
+   * 没有（网络错误、401、非规则错误）时为 null。
+   * 之所以不解析 ``detail`` 里的中文：文案改一个字匹配就静默失效，
+   * 而失效的样子只是"提示突然变通用"，没人会发现。
+   */
+  readonly ruleCode: string | null
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, ruleCode: string | null = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.ruleCode = ruleCode
   }
 }
 
@@ -112,7 +124,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     } catch {
       // 响应不是 JSON 时保留默认提示
     }
-    throw new ApiError(response.status, message)
+    // 后端的规则错误会带这个头。跨域下要能读到，后端在 CORS 里配了
+    // expose_headers，否则这里永远是 null —— 表现为"按码映射文案"整段失效。
+    throw new ApiError(response.status, message, response.headers.get('X-Rule-Code'))
   }
 
   if (response.status === 204) return undefined as T
@@ -224,6 +238,36 @@ export function fetchWeeklyStats(): Promise<WeeklyStats> {
 export async function fetchSuggestionEngines(): Promise<SuggestionEngineInfo[]> {
   const result = await request<{ engines: SuggestionEngineInfo[] }>('/activity/engines')
   return result.engines
+}
+
+// ---------- 第八天：时间规则 ----------
+//
+// 三个接口都不做本地规则计算：区间运算（跨天免打扰、窗口裁剪、间隔）只在后端一份。
+// 前端算第二份的后果不是"性能更好"，而是两边在边界上慢慢漂，且漂了不报错。
+
+// 当前生效的规则清单 + 那一天算出来的三段区间。
+export function fetchActivityRules(day?: string): Promise<ActivityRuleset> {
+  return request<ActivityRuleset>(`/activity/rules${day ? `?day=${day}` : ''}`)
+}
+
+// 设置面板边改边看用的预览：用**未保存**的草稿算，只算不存。
+// 矛盾的条件不会报错，而是通过 notice 说明（编辑到一半本来就可能是矛盾的）。
+export function previewActivityRules(
+  settings: ActivitySettings,
+  day?: string,
+): Promise<ActivityRuleset> {
+  return request<ActivityRuleset>(`/activity/rules/preview${day ? `?day=${day}` : ''}`, {
+    method: 'POST',
+    body: settings,
+  })
+}
+
+// 解释某一个时刻：能不能排、卡在哪条规则、六条规则各自怎么说。
+// at 传 HH:MM（配合 day）或完整 ISO 串。
+export function explainActivitySlot(at: string, day?: string): Promise<SlotExplanation> {
+  const params = new URLSearchParams({ at })
+  if (day) params.set('day', day)
+  return request<SlotExplanation>(`/activity/explain?${params.toString()}`)
 }
 
 // ---------- 第六天：每日总结 ----------

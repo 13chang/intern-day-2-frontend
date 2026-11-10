@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { ApiError, saveActivitySettings } from '../api'
-import type { ActivitySettings, ActivityWindow } from '../types'
+import { useEffect, useState } from 'react'
+import { ApiError, previewActivityRules, saveActivitySettings } from '../api'
+import type { ActivityRuleset, ActivitySettings, ActivityWindow } from '../types'
 
 type Props = {
   settings: ActivitySettings | null
@@ -15,6 +15,31 @@ function windowSummary(windows: ActivityWindow[]): string {
 }
 
 /**
+ * 只挑后端认识的字段。
+ *
+ * 不整个对象发过去：``ActivitySettings`` 从服务端读回来时会带 ``user_id``，
+ * 原样回传等于让客户端告诉服务端"我是谁"——虽然后端不读它，但这种形状不该存在。
+ */
+function payloadOf(value: ActivitySettings): ActivitySettings {
+  return {
+    work_start: value.work_start,
+    work_end: value.work_end,
+    windows: value.windows,
+    quiet_start: value.quiet_start || null,
+    quiet_end: value.quiet_end || null,
+    reminders_enabled: value.reminders_enabled,
+    allow_during_work: value.allow_during_work,
+    daily_target: value.daily_target,
+    postpone_policy: value.postpone_policy,
+  }
+}
+
+function rangeText(ranges: { start: string; end: string }[]): string {
+  if (ranges.length === 0) return '无'
+  return ranges.map((item) => `${item.start}-${item.end}`).join('、')
+}
+
+/**
  * 设置面板。
  *
  * 默认折叠：这一栏还要放「今日安排」和「周统计」，展开的表单会把列表挤到看不见。
@@ -26,6 +51,8 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
   const [synced, setSynced] = useState<ActivitySettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [localError, setLocalError] = useState('')
+  const [ruleset, setRuleset] = useState<ActivityRuleset | null>(null)
+  const [rulesError, setRulesError] = useState('')
 
   // 后端返回（首次加载 / 保存成功后）以服务端为准覆盖本地草稿，
   // 避免用户改了没保存、然后列表刷新把脏值又带回来。
@@ -39,6 +66,42 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
     setSynced(settings)
     if (!open) setDraft(settings)
   }
+
+  /**
+   * 边改边看：草稿变化 350ms 后问后端"按这份设置算，现在的边界是什么"。
+   *
+   * 为什么不让前端自己按字符串切：区间运算里有跨天免打扰、窗口裁剪、已过去的时间
+   * 这些坑，前端实现第二份必然和真正排程用的那份漂 —— 而且漂了不会报错，
+   * 只表现为"面板上说能排，点生成却说没有可用时段"。
+   *
+   * 350ms 是防抖：改一个时间框会连续触发 onChange（每敲一个数字一次），
+   * 每次都发请求的话，最后回来的那个不一定是最后改的那个。
+   */
+  useEffect(() => {
+    if (!open || !draft) return
+    let active = true
+    const timer = window.setTimeout(() => {
+      previewActivityRules(payloadOf(draft))
+        .then((next) => {
+          if (!active) return
+          setRuleset(next)
+          setRulesError('')
+        })
+        .catch((err: unknown) => {
+          if (!active) return
+          // 401 交回页面（要回登录页），其余只在本面板里提示
+          if (err instanceof ApiError && err.status === 401) {
+            onError(err, '读取规则失败')
+            return
+          }
+          setRulesError(err instanceof Error ? err.message : '读取规则失败')
+        })
+    }, 350)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [open, draft, onError])
 
   if (!draft) {
     return (
@@ -107,19 +170,7 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
     setSaving(true)
     setLocalError('')
     try {
-      // 显式挑字段，不把 user_id / 前端临时状态一起发过去
-      const payload: ActivitySettings = {
-        work_start: draft.work_start,
-        work_end: draft.work_end,
-        windows: draft.windows,
-        quiet_start: draft.quiet_start || null,
-        quiet_end: draft.quiet_end || null,
-        reminders_enabled: draft.reminders_enabled,
-        allow_during_work: draft.allow_during_work,
-        daily_target: draft.daily_target,
-        postpone_policy: draft.postpone_policy,
-      }
-      const saved = await saveActivitySettings(payload)
+      const saved = await saveActivitySettings(payloadOf(draft))
       onSaved(saved)
       setOpen(false)
     } catch (err) {
@@ -275,6 +326,48 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
             />
             <span>到点提醒（关闭后不再高亮最近一条）</span>
           </label>
+
+          {/*
+            规则清单（R1-3）。把"现在到底按什么规则在排"直接列出来：
+            上面几个输入框只写了参数，看不出这些参数合起来意味着什么 ——
+            例如可活动时段 14:00-17:30 被工作时段 09:00-18:00 裁过之后
+            仍然是 14:00-17:30，但反过来就会被裁掉一截，只有算出来才看得见。
+          */}
+          <div className="rulestack">
+            <div className="rulestack__head">
+              <span className="field__label">当前生效的规则</span>
+              <span className="hint hint--small">改上面的参数会立刻反映在这里</span>
+            </div>
+
+            {rulesError && (
+              <p className="hint hint--warn" role="alert">
+                {rulesError}
+              </p>
+            )}
+
+            {ruleset && (
+              <>
+                <ol className="rulestack__list">
+                  {ruleset.rules.map((rule) => (
+                    <li className="rule" key={rule.code} data-rule={rule.code}>
+                      <span className="rule__name">{rule.name}</span>
+                      <span className="rule__boundary">{rule.boundary}</span>
+                      {!rule.blocking && <span className="rule__tag">仅提示</span>}
+                      <span className="rule__summary">{rule.summary}</span>
+                    </li>
+                  ))}
+                </ol>
+                <p className="hint hint--small">
+                  可活动 {rangeText(ruleset.allowed_ranges)} · 免打扰{' '}
+                  {rangeText(ruleset.quiet_ranges)} · 实际可用{' '}
+                  {rangeText(ruleset.free_ranges)}
+                </p>
+                {/* 边界算不出来时说明原因：编辑到一半条件矛盾是正常的，
+                    但要让用户知道"现在这个组合排不出东西"以及该改哪一侧。 */}
+                {ruleset.notice && <p className="hint hint--warn">{ruleset.notice}</p>}
+              </>
+            )}
+          </div>
 
           {localError && (
             <p className="banner banner--error" role="alert">

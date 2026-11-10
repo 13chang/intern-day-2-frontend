@@ -19,6 +19,7 @@ import DayStrip from '../components/DayStrip'
 import SettingsPanel from '../components/SettingsPanel'
 import WeeklyStats from '../components/WeeklyStats'
 import TopBar from '../components/TopBar'
+import { ruleHint } from '../rules'
 import type {
   Activity,
   ActivitySettings,
@@ -97,7 +98,12 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
         onExpired()
         return
       }
-      setError(err instanceof Error ? err.message : fallback)
+      // 规则类错误额外补一句"去改哪里"（R1-5）：后端的中文已经说清
+      // "15:20 落在免打扰 15:00-16:00 内"，但用户还得自己找是哪个输入框。
+      // 这里按稳定的规则码取提示，不解析中文 —— 文案改了也不会失效。
+      const message = err instanceof Error ? err.message : fallback
+      const hint = err instanceof ApiError ? ruleHint(err.ruleCode) : ''
+      setError(hint ? `${message}（${hint}）` : message)
     },
     [onExpired],
   )
