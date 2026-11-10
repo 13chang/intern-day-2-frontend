@@ -17,6 +17,15 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      // WebView 的版本由设备决定，不由 App 决定，打包时不能假设内核是新的。
+      // API 29（Android 10）自带的系统 WebView 是 Chrome 74，而 Vite 8 默认的
+      // 'baseline-widely-available' 面向 Chrome 107+，会把 ?. 和 ?? 原样留在产物里。
+      // Chrome 80 以下不认识这两个语法，解析阶段就抛 SyntaxError: Unexpected token ?，
+      // 表现为「APK 装得上、点开白屏」，而且日志里只有一行 SyntaxError，很容易误判成业务 bug。
+      // 降到 es2019（?? 和 ?. 属于 es2020）让打包器统一降级，覆盖到 Android 10 这档老内核。
+      target: 'es2019',
+    },
     server: {
       // 监听 0.0.0.0，容器外（宿主机浏览器）才能访问
       host: true,
