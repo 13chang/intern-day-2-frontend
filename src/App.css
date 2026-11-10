@@ -571,7 +571,9 @@
 
 .assistant__body {
   flex: 1;
-  min-height: 0;
+  /* 保底高度 = 一条对话 + 输入框：链路面板展开时把它压到 56px 的话，
+     输入框会溢出来盖住面板最后一行，看着像渲染坏了。 */
+  min-height: 132px;
   display: flex;
 }
 
@@ -1950,4 +1952,234 @@
   border-color: #f0c9c4;
   background: var(--danger-bg);
   color: var(--danger);
+}
+
+/* ---------- 链路视图（第八天 R5-4） ----------
+ *
+ * 挂在「已查询」那一行下面，折叠着，点开就地展开：
+ * 链路是"想核对时才看"的东西，常驻会把对话挤下去；
+ * 但分数在折叠状态下也露出来 —— 不点开也该知道这次回答靠不靠谱。
+ *
+ * 同样的兼容约束：用子项 margin，不用 flex 的 gap（Chrome 74 不认）。
+ * 时间条用绝对定位 + 百分比，容器宽度变化时不用重算。
+ */
+
+.trace {
+  padding: 2px 2px 0;
+  font-size: 12px;
+  /* 允许收缩：面板展开时如果空间不够，宁可让它内部滚动，
+     也不能把下面的对话/输入框顶出卡片、或者被输入框盖住最后一行。
+     min-height: 0 是配套的 —— flex item 默认不会缩到内容以下。 */
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.trace__toggle {
+  display: inline-block;
+  /* 不参与拉伸：按钮的点击区域跟着文字走，别变成整行 */
+  align-self: flex-start;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.trace__toggle:hover {
+  color: var(--text);
+}
+
+.trace__caret {
+  margin-right: 4px;
+  font-size: 10px;
+}
+
+/* 分数：折叠时也要能看见，所以挂在标题行里而不是面板内部 */
+.trace__score {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.trace__score--good {
+  border-color: #bfe0cf;
+  background: #f0f8f3;
+  color: #1f7a4d;
+}
+
+.trace__score--warn {
+  border-color: #ecd8a8;
+  background: #fdf6e6;
+  color: #8a5a00;
+}
+
+.trace__score--bad {
+  border-color: #f0c9c4;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.trace__panel {
+  margin-top: 6px;
+  padding: 10px 12px;
+  /* 上限用视口比例而不是写死像素：写死 320px 时，带扣分项的运行会被内部滚动截在中间，
+     而面板恰恰是"要看全"的东西。用 vh 而不是 min()，后者要 Chrome 79。 */
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.trace__hint {
+  margin: 0;
+  color: var(--muted);
+}
+
+.trace__hint--warn {
+  color: var(--danger);
+}
+
+.trace__retry {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.trace__summary {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
+.trace__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trace__row {
+  display: flex;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+/* 名字列给上限而不是定宽：手机上一个长工具名会把时间条挤没 */
+.trace__name {
+  flex: 0 1 auto;
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.trace__detail {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* 这一步有安全判定。用符号而不是背景色：背景色会和"报错"混淆 */
+.trace__mark {
+  margin-right: 4px;
+  color: #b26a00;
+}
+
+.trace__bar {
+  position: relative;
+  flex: 1 1 60px;
+  height: 8px;
+  margin: 0 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.trace__bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: var(--accent);
+  opacity: 0.7;
+}
+
+.trace__bar-fill--error {
+  background: var(--danger);
+  opacity: 0.85;
+}
+
+.trace__ms {
+  flex: 0 0 auto;
+  min-width: 52px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trace__signals,
+.trace__findings {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.trace__signals-lead,
+.trace__findings-lead {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+}
+
+.trace__signals-list,
+.trace__findings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trace__signal {
+  padding: 1px 0;
+  color: #8a5a00;
+}
+
+.trace__signal-at {
+  color: var(--muted);
+}
+
+.trace__finding {
+  padding: 1px 0;
+  color: var(--danger);
+}
+
+.trace__finding-penalty {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trace__finding-detail {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.trace__ok {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: #1f7a4d;
 }

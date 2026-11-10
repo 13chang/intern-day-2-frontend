@@ -9,6 +9,7 @@ import type { AgentInfo, User } from '../types'
 import { classifyChatError, describeForConsole } from './chatError'
 import type { ChatError } from './chatError'
 import QueryTrail from './QueryTrail'
+import TracePanel from './TracePanel'
 import { useQueryTrail } from './useQueryTrail'
 
 // 默认走同源路径，由 vite.config.ts 代理到 Runtime（浏览器只认 5173）。
@@ -158,7 +159,7 @@ function ChatStage({ modeText, toolsText, error, onClearError, copy }: StageProp
   const [sending, setSending] = useState(false)
   const [retries, setRetries] = useState(0)
   // 本轮实际调用了哪些工具、各返回几条（数字来自后端回执，不是前端猜的）
-  const { calls: trail, clear: clearTrail } = useQueryTrail(agent)
+  const { calls: trail, runId, clear: clearTrail } = useQueryTrail(agent)
 
   useEffect(() => {
     const subscription = agent.subscribe({
@@ -254,6 +255,11 @@ function ChatStage({ modeText, toolsText, error, onClearError, copy }: StageProp
 
       {/* 查了什么都摆在这儿：回答里的每个数字都能对应到一次真实查询 */}
       <QueryTrail calls={trail} />
+
+      {/* 链路面板跟着「已查询」走：两者说的是同一件事（这一轮到底干了什么），
+          分开挂会让用户以为其中一个是别的东西。
+          key 用 runId：换一轮就重挂载，上一轮的展开状态和已取到的链路自然清掉 */}
+      <TracePanel key={runId ?? 'idle'} runId={runId} />
 
       <div className="assistant__body">
         {/* CopilotChat 一直挂着，空会话时只是隐藏：

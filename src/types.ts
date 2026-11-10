@@ -27,6 +27,58 @@ export type AgentInfo = {
   reason: string
 }
 
+// ---------- 第八天：链路视图 ----------
+//
+// 对应后端 GET /agent/runs/{runId}/trace。字段都是结构信息：
+// span 名字、耗时、白名单内属性、安全事件、规则评分。
+// 里面**没有**对话原文 —— 后端刻意不存，这里也就不可能显示。
+
+export type TraceEvent = {
+  name: string
+  at_ms: number
+  attributes: Record<string, unknown>
+}
+
+export type TraceSpan = {
+  name: string
+  span_id: string
+  parent_id: string | null
+  /** 相对这次运行起点的毫秒偏移。只有时长画不出瀑布图（会一律看着像串行） */
+  started_ms: number
+  duration_ms: number
+  attributes: Record<string, unknown>
+  status: string
+  events: TraceEvent[]
+}
+
+/** 安全信号：由 span 上的安全事件聚合而来（注入命中、输出被截断） */
+export type TraceSignal = {
+  kind: string
+  span: string
+  at_ms: number
+  attributes: Record<string, unknown>
+}
+
+/** 规则评分。返回 null 表示后端还没算（旧版本或面板关掉） */
+export type TraceEvaluation = {
+  version: number
+  score: number
+  verdict: 'good' | 'warn' | 'bad'
+  intent: string | null
+  findings: { kind: string; detail: string; penalty: number }[]
+  span_count: number
+}
+
+export type RunTrace = {
+  trace_id: string
+  run_id: string | null
+  span_count: number
+  total_ms: number
+  spans: TraceSpan[]
+  signals: TraceSignal[]
+  evaluation: TraceEvaluation | null
+}
+
 // ---------- 第五天：久坐活动助手 ----------
 
 export type Tab = 'activity' | 'todo' | 'summary'

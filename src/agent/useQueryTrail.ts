@@ -13,7 +13,7 @@ type ToolEventAgent = {
   /** 已发生的消息列表；工具参数从这里的 toolCalls 取，见 findToolArgs 的说明 */
   messages?: readonly unknown[]
   subscribe: (subscriber: {
-    onRunStartedEvent?: () => void
+    onRunStartedEvent?: (params: { event?: { runId?: string } }) => void
     onToolCallStartEvent?: (params: {
       event: { toolCallId?: string; toolCallName?: string }
     }) => void
@@ -38,14 +38,22 @@ type ToolEventAgent = {
  */
 export function useQueryTrail(agent: ToolEventAgent): {
   calls: ToolCallRecord[]
+  /** 本轮运行的 runId：链路视图靠它反查 trace（R5-4）。拿不到就是 null */
+  runId: string | null
   /** 清空。新建对话时用：不然上一次的「已查询」会挂在空白会话上方 */
   clear: () => void
 } {
   const [calls, setCalls] = useState<ToolCallRecord[]>([])
+  const [runId, setRunId] = useState<string | null>(null)
 
   useEffect(() => {
     const subscription = agent.subscribe({
-      onRunStartedEvent: () => setCalls([]),
+      // 新一轮开始：清掉上一轮的工具列表，同时记下这一轮的 runId。
+      // runId 只在 RUN_STARTED 里有，后面的事件都不带，所以必须在这里取。
+      onRunStartedEvent: ({ event }) => {
+        setCalls([])
+        setRunId(typeof event?.runId === 'string' && event.runId ? event.runId : null)
+      },
 
       onToolCallStartEvent: ({ event }) => {
         setCalls((prev) => [
@@ -91,5 +99,12 @@ export function useQueryTrail(agent: ToolEventAgent): {
     return () => subscription.unsubscribe()
   }, [agent])
 
-  return { calls, clear: () => setCalls([]) }
+  return {
+    calls,
+    runId,
+    clear: () => {
+      setCalls([])
+      setRunId(null)
+    },
+  }
 }

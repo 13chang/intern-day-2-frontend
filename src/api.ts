@@ -10,6 +10,7 @@ import type {
   GenerateResult,
   LoginResponse,
   OperationResult,
+  RunTrace,
   OverviewResult,
   PostponeResult,
   ReshuffleQuota,
@@ -176,6 +177,13 @@ export function removeItem(id: number): Promise<void> {
 // 也用来确认后端 Agent 端点确实挂了（未登录会被 401 挡掉）。
 export function fetchAgentInfo(): Promise<AgentInfo> {
   return request<AgentInfo>('/agent/info')
+}
+
+// 第八天：某一次运行的链路。runId 来自 AG-UI 的 RUN_STARTED 事件，
+// 后端按它反查 trace_id（OTel 的 trace_id 只能读不能指定，所以必须靠这层索引）。
+// runId 不是本人的会返回 404 —— 页面上按"查不到"处理即可，不用区分"不存在"和"不是你的"。
+export function fetchRunTrace(runId: string): Promise<RunTrace> {
+  return request<RunTrace>(`/agent/runs/${encodeURIComponent(runId)}/trace`)
 }
 
 // ---------- 第五天：久坐活动助手 ----------
