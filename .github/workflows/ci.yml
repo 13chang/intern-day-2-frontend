@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # 与 pnpm-lock.yaml 的 lockfileVersion 9.0 对齐。
+          # 仓库里没有 packageManager 字段，所以版本必须显式指定，
+          # 否则 action 会去猜，不同时间跑可能拿到不同大版本。
+          version: 10
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          # Capacitor CLI 要求 Node >= 22。CI 里虽然不跑 cap sync，
+          # 但保持和开发环境一致，免得以后加了原生构建步骤再回来改。
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        # --frozen-lockfile：pnpm-lock.yaml 和 package.json 不一致时直接失败，
+        # 不让 CI 自己解析出一份没提交的依赖树。
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查与构建
+        # build 脚本本身是 tsc -b && vite build，类型错误会挡住这里
+        run: pnpm build
+
+      - name: 静态检查
+        # oxlint 目前有 5 条 warning、0 条 error，只拦 error
+        run: pnpm lint
