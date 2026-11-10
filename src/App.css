@@ -363,6 +363,9 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  /* 右侧引擎按钮 + 重新生成挤不下时要能换行，
+     否则这一整块会把左边的「共 N 条」压成两行并互相重叠。 */
+  flex-wrap: wrap;
   gap: 16px;
 }
 
@@ -860,7 +863,13 @@
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 10px;
+  /* flex 的 gap 要 Chrome 84 起才支持，Android 10 自带的 WebView 74 直接忽略，
+     表现是「引擎芯片」和「重新生成」贴成一条，按钮还会压住旁边的芯片。
+     改用子项 margin 兜底：老内核也有间距，新内核下不会因为叠加 gap 而变成两倍。 */
+}
+
+.generate-bar > * {
+  margin: 5px;
 }
 
 /* 窄屏时两个引擎按钮和主按钮会挤成一团，索性各占一行 */
