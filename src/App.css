@@ -1923,6 +1923,87 @@
   gap: 8px;
 }
 
+/* ---------- 历史总结（第十天） ----------
+   用户要求"之前已经总结过的也要显示"。这里是一列可点的行：
+   日期 + 摘要 + 状态，点一行就把上面的正文切到那天。
+   和活动助手一样复用 .day-strip / .day-chip 画日期条，
+   所以两块页面的"日期怎么选"操作习惯完全一致。 */
+
+.summary-history {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.summary-history__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.summary-history__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.summary-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.summary-history__row {
+  display: flex;
+  align-items: baseline;
+  width: 100%;
+  /* 用 padding + 负 margin 做"整行可点但文字仍对齐卡片左边"：
+     直接给 li 加 padding 会让高亮背景比正文窄一圈 */
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.summary-history__row:hover {
+  background: #f7f8fa;
+}
+
+.summary-history__row--active {
+  border-color: var(--accent);
+  background: var(--info-bg);
+}
+
+.summary-history__date {
+  flex: 0 0 auto;
+  width: 168px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.summary-history__text {
+  flex: 1 1 auto;
+  /* 不加 min-width: 0，长摘要不会省略，会把右边那列状态挤到下一行 */
+  min-width: 0;
+  margin-right: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-history__meta {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 520px) {
   .summary-numbers {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1931,6 +2012,21 @@
   .summary-card__foot {
     flex-direction: column;
     gap: 2px;
+  }
+
+  /* 窄屏上日期独占一行：三列并排会把摘要压到只剩几个字 */
+  .summary-history__row {
+    flex-wrap: wrap;
+  }
+
+  .summary-history__date {
+    width: 100%;
+    margin-bottom: 2px;
+  }
+
+  .summary-history__text {
+    flex: 1 1 100%;
+    margin-right: 0;
   }
 }
 

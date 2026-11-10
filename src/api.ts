@@ -21,6 +21,7 @@ import type {
   SuggestionDecision,
   SuggestionEngine,
   SuggestionEngineInfo,
+  SummaryHistory,
   SummaryRunResult,
   TodoItem,
   UndoResult,
@@ -378,4 +379,14 @@ export function runDailySummary(day?: string): Promise<SummaryRunResult> {
   return request<SummaryRunResult>(`/summary/run${day ? `?day=${day}` : ''}`, {
     method: 'POST',
   })
+}
+
+/**
+ * 最近一段时间的日报（已经把"哪天没有"排除掉）。
+ *
+ * 为什么要有这个：单日接口一次只回答一天，页面想画"哪几天写过总结"
+ * 就得一天一个请求，14 天就是 14 个请求、绝大多数还是空。一次拿全再按天查正文。
+ */
+export function fetchSummaryHistory(days = 14): Promise<SummaryHistory> {
+  return request<SummaryHistory>(`/summary/history?days=${days}`)
 }

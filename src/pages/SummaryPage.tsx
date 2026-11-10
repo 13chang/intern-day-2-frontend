@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, fetchDailySummary, runDailySummary } from '../api'
+import { ApiError, fetchDailySummary, fetchSummaryHistory, runDailySummary } from '../api'
 import SummaryCard from '../components/SummaryCard'
 import TopBar from '../components/TopBar'
-import type { DailySummary, Tab, User } from '../types'
+import type { DailySummary, SummaryHistory, SummaryHistoryDay, Tab, User } from '../types'
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
@@ -18,8 +18,18 @@ const POLL_INTERVAL_MS = 3000
 const MAX_POLL_TICKS = 40
 
 /** 手动补跑窗口，对应后端 routers/summary.py 的 MAX_BACKFILL_DAYS。
- *  前端只用它来禁用「前一天」，越界时后端仍会返回 422 兜底。 */
+ *  前端只用它来禁用「立即生成」，越界时后端仍会返回 422 兜底。 */
 const BACKFILL_DAYS = 7
+
+/**
+ * 日期条/历史列表看多少天。
+ *
+ * 比 BACKFILL_DAYS 大是有意的：7 天限制的是"能不能**生成**"，
+ * 这里限制的是"能**翻到多远**"。Worker 每天都会给有记录的日期生成日报，
+ * 只让看 7 天等于把已经写好的总结藏起来。
+ * 与后端 HISTORY_DAYS_DEFAULT 保持一致（后端上限 60）。
+ */
+const HISTORY_DAYS = 14
 
 /** 本地时区的今天，YYYY-MM-DD。不用 toISOString：那是 UTC，东八区早上 8 点前会差一天。 */
 function localIso(): string {
@@ -36,6 +46,18 @@ function shiftIso(iso: string, days: number): string {
   const month = String(base.getMonth() + 1).padStart(2, '0')
   const day = String(base.getDate()).padStart(2, '0')
   return `${base.getFullYear()}-${month}-${day}`
+}
+
+/** 升序补齐一段日期。ISO 定长串可以按字典序直接比较，不会出现时区问题。 */
+function isoRange(start: string, end: string): string[] {
+  const out: string[] = []
+  let cursor = start
+  // 上限只是防呆：参数一旦算错成"从今天到明年"，这个循环会把页面卡死
+  while (cursor <= end && out.length < 400) {
+    out.push(cursor)
+    cursor = shiftIso(cursor, 1)
+  }
+  return out
 }
 
 /**
@@ -55,6 +77,29 @@ function dayName(iso: string, today: string): string {
   return text
 }
 
+/** 日期条上的短名字：昨天 / 前天 / 周X。再往后写"3 天前"没人这么讲。 */
+function chipName(iso: string, today: string): string {
+  if (iso === shiftIso(today, -1)) return '昨天'
+  if (iso === shiftIso(today, -2)) return '前天'
+  return `周${WEEKDAYS[new Date(`${iso}T00:00:00`).getDay()]}`
+}
+
+/**
+ * 一格上的状态文字。
+ *
+ * 有日报时给"完成/计划"而不是一个勾：和活动助手的日期条同一个口径，
+ * 扫一眼就知道那天做得怎么样，不用点进去。
+ */
+function chipStatus(item: SummaryHistoryDay | undefined): { text: string; empty: boolean } {
+  if (!item) return { text: '空', empty: true }
+  if (item.status === 'ready') {
+    return { text: `${item.completed}/${item.planned_total}`, empty: item.planned_total === 0 }
+  }
+  if (item.status === 'generating' || item.status === 'pending') return { text: '生成中', empty: false }
+  if (item.status === 'failed') return { text: '失败', empty: true }
+  return { text: '空', empty: true }
+}
+
 type Props = {
   user: User
   onLogout: () => Promise<void>
@@ -67,10 +112,12 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
   // 默认看最近一个**已经结束**的自然日：今天的日报本来就不该存在，
   // 一进来就显示"这一天还没结束"会让人以为功能坏了。
   const latest = shiftIso(today, -1)
-  const earliest = shiftIso(latest, -(BACKFILL_DAYS - 1))
+  /** 还能"补生成"的最早一天；比这更早的只能看，不能重新生成 */
+  const earliestRunnable = shiftIso(latest, -(BACKFILL_DAYS - 1))
 
   const [day, setDay] = useState(latest)
   const [summary, setSummary] = useState<DailySummary | null>(null)
+  const [history, setHistory] = useState<SummaryHistory | null>(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   /**
@@ -99,6 +146,23 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
   )
 
   /**
+   * 拉最近两周的日报列表。
+   *
+   * 和 `load()` 分开：列表只在进入页面、换日期、生成结束这几个时机需要更新，
+   * 轮询时每 3 秒拉一次纯属浪费（那几天不会凭空多出日报）。
+   */
+  const loadHistory = useCallback(async () => {
+    try {
+      const data = await fetchSummaryHistory(HISTORY_DAYS)
+      setHistory(data)
+    } catch (err) {
+      // 列表拉不到不该把整页打成错误态：正文才是主角，
+      // 列表退化成"没有历史"仍然可用
+      handleError(err, '加载历史总结失败')
+    }
+  }, [handleError])
+
+  /**
    * 拉一次日报。
    *
    * `silent` 用于轮询：不要切 loading，否则页面每 3 秒闪一次"正在加载"，
@@ -125,6 +189,8 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
           // 结果已经落地，"已提交 / 正在生成"这类过渡提示就过期了，
           // 留着会和正文里的"生成失败"或日报内容并列，读起来互相打架
           setNotice('')
+          // 正文变了，列表上的状态和摘要也要跟着变（刚生成完这天从"空"变成"完成 2/3"）
+          void loadHistory()
         }
       } catch (err) {
         handleError(err, '加载日报失败')
@@ -132,12 +198,17 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
         if (!silent) setLoading(false)
       }
     },
-    [day, handleError],
+    [day, handleError, loadHistory],
   )
 
   useEffect(() => {
     void load()
   }, [load])
+
+  // 进入页面就把列表拉下来。不跟 `load` 绑在一起：换日期不该重拉整份历史
+  useEffect(() => {
+    void loadHistory()
+  }, [loadHistory])
 
   const status = summary?.status ?? 'missing'
   /**
@@ -171,9 +242,10 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
     return () => clearTimeout(timer)
   }, [shouldPoll, summary, load])
 
-  function handleShift(delta: number) {
-    const next = shiftIso(day, delta)
-    if (next > latest || next < earliest) return
+  /** 换到某一天。日期条、历史列表、前一天/后一天三个入口都走这里。 */
+  function selectDay(next: string) {
+    if (next === day) return
+    if (next > latest || next < earliestVisible) return
     setDay(next)
     // 上一天的内容和提示留在屏幕上会张冠李戴
     setSummary(null)
@@ -209,6 +281,8 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
       pollTicks.current = 0
       // 立刻再查一次：任务可能已经被领走，状态就能从 missing/failed 变成 generating
       await load({ silent: true })
+      // 列表上这天的状态也要从"空"变成"生成中"，否则用户看不出自己点过
+      void loadHistory()
     } catch (err) {
       // 503（Redis 挂了）、422（日期越界）、401（登录失效）都在这里显示后端的中文
       handleError(err, '提交生成任务失败')
@@ -217,9 +291,24 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
     }
   }
 
-  const atEarliest = day <= earliest
+  // 日期条的范围以服务端给的窗口为准；还没拉到就先按本地算一个，
+  // 免得首屏空着一块、列表回来后整页往下跳
+  const stripStart = history?.start ?? shiftIso(latest, -(HISTORY_DAYS - 1))
+  const stripEnd = history?.end ?? latest
+  const days = isoRange(stripStart, stripEnd)
+  const earliestVisible = days[0] ?? latest
+
+  const byDate = new Map<string, SummaryHistoryDay>()
+  for (const item of history?.days ?? []) byDate.set(item.date, item)
+
+  const historyRows = history?.days ?? []
+  const readyCount = historyRows.filter((item) => item.status === 'ready').length
+
+  const atEarliest = day <= earliestVisible
   const atLatest = day >= latest
   const missing = status === 'missing'
+  /** 比补跑窗口更早的日子只能看：后端 `POST /summary/run` 会以 422 拒绝 */
+  const canRun = day >= earliestRunnable
 
   // 按钮文案跟着当前状态走，一个按钮把"生成 / 重试 / 等它跑完"三种语义说清
   let runLabel = '立即生成'
@@ -228,6 +317,7 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
   else if (awaiting) runLabel = '等待中…'
   else if (status === 'generating' || status === 'pending') runLabel = '生成中…'
   else if (status === 'failed') runLabel = '重试'
+  else if (!canRun) runLabel = '只能查看'
 
   // 这些状态下按钮只是"状态指示"，没有可执行的动作，用浅色样式。
   // awaiting 也算：刚提交完那几秒再点一次，后端会用分钟级的任务标识挡回来，
@@ -235,7 +325,11 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
   const runQuiet =
     status === 'ready' || status === 'generating' || status === 'pending' || awaiting
 
-  const runDisabled = running || runQuiet
+  const runDisabled = running || runQuiet || !canRun
+
+  let runTitle = `为 ${day} 生成日报（只入队，不等待）`
+  if (status === 'ready') runTitle = '已有日报，不需要再生成'
+  else if (!canRun) runTitle = `最多补跑最近 ${BACKFILL_DAYS} 天；更早的日报只能查看`
 
   return (
     <main className="screen screen--wide screen--stack">
@@ -245,23 +339,26 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
         <header className="panel__header">
           <div>
             <h1 className="panel__title">每日总结</h1>
-            <p className="hint">{dayName(day, today)}</p>
+            <p className="hint">
+              {dayName(day, today)}
+              {readyCount > 0 && ` · 最近 ${HISTORY_DAYS} 天已生成 ${readyCount} 份`}
+            </p>
           </div>
 
           <div className="summary-nav">
             <button
               className="button button--ghost"
               type="button"
-              onClick={() => handleShift(-1)}
+              onClick={() => selectDay(shiftIso(day, -1))}
               disabled={atEarliest || loading}
-              title={atEarliest ? `最多回看 ${BACKFILL_DAYS} 天` : '看前一天'}
+              title={atEarliest ? `最多回看 ${HISTORY_DAYS} 天` : '看前一天'}
             >
               前一天
             </button>
             <button
               className="button button--ghost"
               type="button"
-              onClick={() => handleShift(1)}
+              onClick={() => selectDay(shiftIso(day, 1))}
               disabled={atLatest || loading}
               title={atLatest ? '只能为已经结束的自然日生成日报' : '看后一天'}
             >
@@ -270,20 +367,50 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
             {/* 不可用时换成 ghost 样式：primary 蓝底即使 disabled 也像可点，
                 用户会反复去戳一个永远不会响应的按钮 */}
             <button
-              className={runQuiet ? 'button button--ghost' : 'button button--primary'}
+              className={runQuiet || !canRun ? 'button button--ghost' : 'button button--primary'}
               type="button"
               onClick={() => void handleRun()}
               disabled={runDisabled}
-              title={
-                status === 'ready'
-                  ? '已有日报，不需要再生成'
-                  : `为 ${day} 生成日报（只入队，不等待）`
-              }
+              title={runTitle}
             >
               {runLabel}
             </button>
           </div>
         </header>
+
+        {/*
+          日期条：和活动助手同一个形态。原来只有"前一天/后一天"两个按钮，
+          用户看不到"哪几天写过总结"，也就谈不上"之前的也能翻"。
+          格子上直接给完成/计划，扫一眼就知道那天怎么样。
+        */}
+        <div className="day-strip" role="tablist" aria-label="选择日报日期">
+          {days.map((item) => {
+            const info = byDate.get(item)
+            const chip = chipStatus(info)
+            const active = item === day
+            return (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={active ? 'day-chip day-chip--active' : 'day-chip'}
+                onClick={() => selectDay(item)}
+                title={`${dayName(item, today)}　${info ? statusText(info.status) : '还没有总结'}`}
+              >
+                <span className="day-chip__name">{chipName(item, today)}</span>
+                <span className="day-chip__date">
+                  {Number(item.slice(5, 7))}/{Number(item.slice(8, 10))}
+                </span>
+                <span
+                  className={chip.empty ? 'day-chip__count day-chip__count--empty' : 'day-chip__count'}
+                >
+                  {chip.text}
+                </span>
+              </button>
+            )
+          })}
+        </div>
 
         {error && (
           <p className="banner banner--error" role="alert">
@@ -301,7 +428,9 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
           <p className="hint state-line" aria-live="polite">
             {awaiting
               ? '任务已提交，正在等待后台处理…'
-              : '这一天还没有总结。点右上角「立即生成」，会按当天已保存的活动记录统计。'}
+              : canRun
+                ? '这一天还没有总结。点右上角「立即生成」，会按当天已保存的活动记录统计。'
+                : '这一天的总结还没生成过，而且已经超过补跑范围（7 天），不能再补。'}
           </p>
         ) : status === 'generating' || status === 'pending' ? (
           <p className="hint state-line" aria-live="polite">
@@ -330,7 +459,71 @@ export default function SummaryPage({ user, onLogout, onExpired, onTabChange }: 
         ) : summary ? (
           <SummaryCard summary={summary} />
         ) : null}
+
+        {/*
+          历史总结：用户的原话是"之前已经总结过的也要显示"。
+          这里给的是**摘要**（后端截好的 48 字），点一行就切到那天看全文 ——
+          全文渲染在下面那块卡片里，两条路径看的是同一份数据。
+        */}
+        <section className="summary-history">
+          <div className="summary-history__head">
+            <h2 className="summary-history__title">历史总结</h2>
+            <span className="hint hint--small">
+              {historyRows.length === 0
+                ? `最近 ${HISTORY_DAYS} 天还没有生成过`
+                : `最近 ${HISTORY_DAYS} 天 · ${historyRows.length} 天有记录`}
+            </span>
+          </div>
+
+          {historyRows.length === 0 ? (
+            <p className="hint">生成过的总结会按日期列在这里，点一条就能回看当天内容。</p>
+          ) : (
+            <ul className="summary-history__list">
+              {historyRows.map((item) => {
+                const active = item.date === day
+                const text =
+                  item.review ??
+                  (item.status === 'ready' ? '（这一天没有活动记录）' : statusText(item.status))
+                return (
+                  <li key={item.date}>
+                    <button
+                      type="button"
+                      className={
+                        active ? 'summary-history__row summary-history__row--active' : 'summary-history__row'
+                      }
+                      onClick={() => selectDay(item.date)}
+                      aria-current={active}
+                    >
+                      <span className="summary-history__date">{dayName(item.date, today)}</span>
+                      <span className="summary-history__text">{text}</span>
+                      <span className="summary-history__meta">
+                        {item.status === 'ready'
+                          ? `完成 ${item.completed}/${item.planned_total}`
+                          : statusText(item.status)}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
       </div>
     </main>
   )
+}
+
+/** 状态说成人话。missing 不会出现在历史列表里，这里只是兜底。 */
+function statusText(status: string): string {
+  switch (status) {
+    case 'ready':
+      return '已生成'
+    case 'generating':
+    case 'pending':
+      return '生成中'
+    case 'failed':
+      return '生成失败'
+    default:
+      return '还没有总结'
+  }
 }

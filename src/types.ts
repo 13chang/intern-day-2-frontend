@@ -359,6 +359,31 @@ export type SummaryRunResult = {
   message: string
 }
 
+// GET /summary/history：一段时间里**已经有的**日报，按日期倒序。
+// 里面没有的日期就是"那天还没生成"，由页面按 start/end 补齐成日期条。
+export type SummaryHistoryDay = {
+  date: string
+  // ready 之外还会有 generating / failed —— 列表里也要能看出"这天在跑/失败过"
+  status: SummaryStatus
+  planned_total: number
+  completed: number
+  skipped: number
+  unfinished: number
+  // 后端截好的短摘要（48 字 + 省略号），前端不再二次截断
+  review: string | null
+  suggestion: string | null
+  source: 'rule' | 'llm' | null
+  model: string | null
+  generated_at: string | null
+}
+
+export type SummaryHistory = {
+  today: string
+  start: string
+  end: string
+  days: SummaryHistoryDay[]
+}
+
 // ---------- 第八天：时间规则 ----------
 
 // 与后端 rules.py 的规则码一一对应。写成联合类型而不是 string：
