@@ -1735,3 +1735,162 @@
     gap: 2px;
   }
 }
+
+
+/* ---------- 建议列表（第八天 R3） ----------
+   同样不用 flex 的 gap：API 29 出厂 WebView 是 Chrome 74，
+   容器的 gap 要 Chrome 84，用了会在真机上静默失效（按钮连成一串）。 */
+
+.suggestions {
+  padding: 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fcfdff;
+}
+
+.suggestions__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.suggestions__intro {
+  min-width: 0;
+}
+
+.suggestions__title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.suggestions__engine {
+  margin: 8px 0 0;
+}
+
+.suggestion-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* 时间 / 内容 / 按钮组。按钮组窄一点，窄屏时整组换到下一行 */
+.suggestion {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.suggestion__time {
+  padding-top: 1px;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.suggestion__body {
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.suggestion__title {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.suggestion__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 260px;
+}
+
+/* 子项间距一律用 margin，理由同文件顶部：Chrome 74 没有容器的 gap */
+.suggestion__actions > * {
+  margin: 0 0 4px 6px;
+}
+
+.suggestions__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding-top: 12px;
+}
+
+.suggestions__foot > * {
+  margin: 0 8px 4px 0;
+}
+
+/* 撤销条：不遮挡列表，5 秒后自己消失 */
+.undo-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border: 1px solid #cfe0ff;
+  border-radius: 10px;
+  background: #f1f6ff;
+  font-size: 13px;
+}
+
+.undo-bar__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-bar__button {
+  margin-left: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.undo-bar__button:hover {
+  background: #e8f1ff;
+}
+
+/* 推荐依据：每条是"参数 + 结论"，用小字，不做强调 */
+.evidence {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.evidence__item {
+  line-height: 1.8;
+}
+
+@media (max-width: 520px) {
+  .suggestion {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  /* 手机上按钮组占满一整行：挤在右边只剩一两个字宽，更容易点错 */
+  .suggestion__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    max-width: none;
+    padding-top: 6px;
+  }
+
+  .suggestion__actions > * {
+    margin: 0 6px 4px 0;
+  }
+}

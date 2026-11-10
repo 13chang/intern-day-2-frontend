@@ -88,9 +88,70 @@ export type WeeklyStats = {
   days: ActivityDay[]
 }
 
-// 建议草稿的响应形状（ActivityDraft / SuggestResult / ConfirmResult）随"安排建议"
-// 面板一起下线了：现在生成是一次点击直接落库，中间那层草稿不再经过前端。
-// 后端仍保留 POST /activity/suggestions 与 /confirm（只算不存的能力还在）。
+// 建议草稿的响应形状随"安排建议"面板在第六天下线过：那时生成是一次点击直接落库，
+// 中间那层草稿不经过前端。第八天它回来了，但目的变了 —— 现在要的是**逐条决策**：
+// 每行直接给「完成 / 稍后 / 不方便」，不必先存成待执行再点一次。
+// 草稿仍然是草稿，只有用户点了某一行才落库。
+//
+// 与后端 SuggestOut / DraftOut / ConfirmOut 一一对应（app/routers/activity.py）。
+export type ActivityDraft = {
+  scheduled_at: string
+  activity_type: string
+  title: string
+  description: string
+  duration_min: number
+  reason: string
+}
+
+// 三个按钮对应三个落库状态。前端只说"用户点了哪个按钮"，
+// 状态怎么映射由后端决定（DECISION_STATUS），页面不碰状态机。
+export type SuggestionDecision = 'later' | 'done' | 'skip'
+
+export type SuggestResult = {
+  suggestions: ActivityDraft[]
+  explanation: string
+  notice: string
+  mode: string
+  day: string
+  // 模型给出但被规则丢掉的条数
+  dropped: number
+  // 本次真正避开的"否决时刻"数量（换一批时才有）
+  excluded: number
+  // 换一批之后还剩几次；不是换一批的请求为 null
+  remaining_reshuffles: number | null
+  // 推荐依据：每条都是"参数 + 结论"，不是形容词
+  evidence: string[]
+  // 这批到底是谁排的。页面不许在没有这个字段时写"AI 已生成"
+  engine_note: string
+}
+
+export type ConfirmResult = {
+  saved: number
+  day: string
+  // 按决策分类的条数，例如 { done: 2, later: 1 }
+  applied: Record<string, number>
+  activities: Activity[]
+}
+
+export type ReshuffleQuota = {
+  limit: number
+  used: number
+  remaining: number
+  day: string
+}
+
+export type ReshuffleResult = {
+  suggestion: ActivityDraft
+  // 已经扣掉这一次之后的剩余次数
+  remaining: number
+  day: string
+}
+
+export type UndoResult = {
+  deleted: number
+  day: string
+  activities: Activity[]
+}
 
 export type GenerateResult = {
   // 这批安排写到了哪一天。页面上同时能看今天和未来几天，

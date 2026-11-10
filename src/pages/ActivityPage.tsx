@@ -17,6 +17,7 @@ import ActivityCard from '../components/ActivityCard'
 import type { ActivityAction } from '../components/ActivityCard'
 import DayStrip from '../components/DayStrip'
 import SettingsPanel from '../components/SettingsPanel'
+import SuggestionPanel from '../components/SuggestionPanel'
 import WeeklyStats from '../components/WeeklyStats'
 import TopBar from '../components/TopBar'
 import { ruleHint } from '../rules'
@@ -86,6 +87,14 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  /**
+   * 是否展开建议列表。
+   *
+   * 为什么两种入口都留着：「生成安排」是一条点击直接落库（第六天的验收项，
+   * 手机上"帮我排好就行"也确实更快）；「先看建议」是先出草稿、逐条决策，
+   * 点错了还能 5 秒内撤销。硬把其中一个换掉，就会有人失去他习惯的那条路。
+   */
+  const [showSuggestions, setShowSuggestions] = useState(false)
 
   // 以服务端的"今天"为准：客户端时钟不准时，日期条和可排范围才不会整段错位。
   // overview 和列表是同一次加载拿到的，所以这里不会出现两边口径打架的情况。
@@ -285,6 +294,17 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
               >
                 {generating ? '生成中…' : pending.length > 0 ? '重新生成' : '生成安排'}
               </button>
+              {/* 两个入口不是重复：上面那个一条点击直接排好（快），
+                  这个先出草稿、每行自己决定完成/稍后/不方便（可控） */}
+              <button
+                className="button button--ghost"
+                type="button"
+                onClick={() => setShowSuggestions((open) => !open)}
+                disabled={loading}
+                aria-expanded={showSuggestions}
+              >
+                {showSuggestions ? '收起建议' : '先看建议'}
+              </button>
             </div>
           </header>
 
@@ -319,6 +339,19 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
           />
 
           <SettingsPanel settings={settings} onSaved={setSettings} onError={handleError} />
+
+          {/* 建议列表放在日期条和列表之间：它说的是"这一天的候选"，
+              跟着日期条走；落库之后下面那个列表立刻能看到结果 */}
+          {showSuggestions && (
+            <SuggestionPanel
+              day={day}
+              engine={engine}
+              note={note}
+              onSaved={() => void load()}
+              onError={handleError}
+              onClose={() => setShowSuggestions(false)}
+            />
+          )}
 
           {loading ? (
             <p className="hint state-line">正在加载安排…</p>

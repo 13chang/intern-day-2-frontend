@@ -1,20 +1,27 @@
 import { Capacitor } from '@capacitor/core'
 import type {
   Activity,
+  ActivityDraft,
   ActivityRuleset,
   ActivitySettings,
   AgentInfo,
+  ConfirmResult,
   DailySummary,
   GenerateResult,
   LoginResponse,
   OperationResult,
   OverviewResult,
   PostponeResult,
+  ReshuffleQuota,
+  ReshuffleResult,
   SlotExplanation,
-  SummaryRunResult,
+  SuggestResult,
+  SuggestionDecision,
   SuggestionEngine,
   SuggestionEngineInfo,
+  SummaryRunResult,
   TodoItem,
+  UndoResult,
   User,
   WeeklyStats,
 } from './types'
@@ -268,6 +275,73 @@ export function explainActivitySlot(at: string, day?: string): Promise<SlotExpla
   const params = new URLSearchParams({ at })
   if (day) params.set('day', day)
   return request<SlotExplanation>(`/activity/explain?${params.toString()}`)
+}
+
+// ---------- 第八天：建议列表、换一批、换一条、撤销 ----------
+//
+// 这一组接口的共同点：**草稿不落库**。只有用户在某一行的三个按钮上点了一下，
+// 才走 /confirm 写入。所以"生成建议"可以随便点，不会在日程里留下痕迹。
+
+export type SuggestOptions = {
+  engine?: SuggestionEngine
+  count?: number
+  // 只给 llm 用：这次想让模型额外考虑什么
+  note?: string
+  day?: string
+  // 换一批：上一批的时刻，后端会排除掉。不传就是首次生成
+  exclude?: string[]
+}
+
+// 只算不存。后端会把"那天还剩哪些可活动时段"和规则清单一起用掉，
+// 返回的每条草稿都已经过了 validate_slot。
+export function fetchActivitySuggestions(
+  options: SuggestOptions = {},
+): Promise<SuggestResult> {
+  return request<SuggestResult>('/activity/suggestions', {
+    method: 'POST',
+    body: {
+      engine: options.engine ?? 'rule',
+      count: options.count ?? null,
+      note: options.note ?? null,
+      day: options.day ?? null,
+      exclude: options.exclude ?? [],
+    },
+  })
+}
+
+export type ConfirmItem = ActivityDraft & { decision: SuggestionDecision }
+
+// 保存草稿并**同时**落地用户点的那个决策。
+// 分两步（先存待执行、再调 complete）会在第二步失败时留下一条
+// "用户以为已完成、实际待执行"的记录，周统计里少一次。
+export function confirmActivitySuggestions(items: ConfirmItem[]): Promise<ConfirmResult> {
+  return request<ConfirmResult>('/activity/confirm', { method: 'POST', body: { items } })
+}
+
+// 换一条：把某一条挪到最近的空位。
+// keep 必须带上同批其他几条的时刻 —— 它们还没入库，后端不知道它们占着位置。
+export function reshuffleActivitySuggestion(payload: {
+  at: string
+  activity_type?: string
+  keep?: string[]
+  day?: string
+}): Promise<ReshuffleResult> {
+  return request<ReshuffleResult>('/activity/suggestions/reshuffle', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+// 今天还能换几次。由后端按自然日算：前端自己数一定对不上
+// （另一个标签页、手机上也有人在消耗），最后表现为"按钮亮着但点了报错"。
+export function fetchReshuffleQuota(): Promise<ReshuffleQuota> {
+  return request<ReshuffleQuota>('/activity/reshuffle/quota')
+}
+
+// 撤销刚才在建议里点的那一下。5 秒窗口由后端判，前端只负责显示倒计时。
+// 撤销 = 删掉那条记录（它本来就不存在），不是把状态改回待执行。
+export function undoActivity(id: number): Promise<UndoResult> {
+  return request<UndoResult>(`/activity/${id}/undo`, { method: 'POST' })
 }
 
 // ---------- 第六天：每日总结 ----------
