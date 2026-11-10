@@ -8,6 +8,8 @@ import { fetchAgentInfo, readToken } from '../api'
 import type { AgentInfo, User } from '../types'
 import { classifyChatError, describeForConsole } from './chatError'
 import type { ChatError } from './chatError'
+import QueryTrail from './QueryTrail'
+import { useQueryTrail } from './useQueryTrail'
 
 // 默认走同源路径，由 vite.config.ts 代理到 Runtime（浏览器只认 5173）。
 // 不再写死 http://localhost:4000：宿主机 4000 常被其它容器占用，VS Code 自动转发
@@ -155,6 +157,8 @@ function ChatStage({ modeText, toolsText, error, onClearError, copy }: StageProp
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [retries, setRetries] = useState(0)
+  // 本轮实际调用了哪些工具、各返回几条（数字来自后端回执，不是前端猜的）
+  const { calls: trail, clear: clearTrail } = useQueryTrail(agent)
 
   useEffect(() => {
     const subscription = agent.subscribe({
@@ -221,7 +225,8 @@ function ChatStage({ modeText, toolsText, error, onClearError, copy }: StageProp
     setDraft('')
     setHasMessages(false)
     setRetries(0)
-  }, [agent, onClearError])
+    clearTrail()
+  }, [agent, onClearError, clearTrail])
 
   return (
     <div className="assistant__stage">
@@ -246,6 +251,9 @@ function ChatStage({ modeText, toolsText, error, onClearError, copy }: StageProp
           onRetry={() => void retry()}
         />
       )}
+
+      {/* 查了什么都摆在这儿：回答里的每个数字都能对应到一次真实查询 */}
+      <QueryTrail calls={trail} />
 
       <div className="assistant__body">
         {/* CopilotChat 一直挂着，空会话时只是隐藏：

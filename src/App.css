@@ -1894,3 +1894,60 @@
     margin: 0 6px 4px 0;
   }
 }
+
+/* ---------- 已查询（第八天 R4） ----------
+ *
+ * 一行状态条，位置在会话区顶部：同一次运行可能查好几个工具，
+ * 塞进回答气泡会跟着滚走，用户回头想确认就看不见了。
+ *
+ * 布局用子项 margin 而不是 flex 的 gap：Chrome 74（本项目 WebView 的下限）
+ * 不认 gap，写了在真机上会挤成一坨。这条约束在 R3 的建议列表里也踩过一次。
+ */
+
+.trail {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  padding: 8px 2px 0;
+  font-size: 12px;
+  flex: none;
+}
+
+.trail__lead {
+  color: var(--muted);
+  margin-right: 8px;
+  white-space: nowrap;
+}
+
+.trail__list {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.trail__item {
+  max-width: 100%;
+  margin: 0 6px 4px 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 查询中：虚线框表示还没拿到结果，和"已经查到了"区分开 */
+.trail__item--running {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+/* 读不到 / 未查询：用警示色，但底色仍浅 —— 它不是错误弹窗，是一行状态 */
+.trail__item--error,
+.trail__item--rejected {
+  border-color: #f0c9c4;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
