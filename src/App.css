@@ -1044,8 +1044,70 @@
 
 .activity__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
   flex: none;
+}
+
+/* ---------- 安排行的编辑态 ----------
+ *
+ * 编辑时整行变成一块表单，不再保留左边的时间和右边的按钮组：
+ * 那些位置被表单自己用了，留着只会让眼睛不知道该看哪儿。
+ */
+
+.activity--editing {
+  display: block;
+  padding: 12px;
+  border-color: var(--accent);
+  background: #fbfdff;
+}
+
+.activity-editor__grid {
+  display: grid;
+  grid-template-columns: 108px 118px 132px minmax(0, 1fr);
+}
+
+/* 子项间距一律用 margin：Chrome 74（本项目 WebView 的下限）不认容器的 gap */
+.activity-editor__grid > * {
+  margin: 0 10px 10px 0;
+}
+
+.editor-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.editor-field--wide {
+  grid-column: 1 / -1;
+}
+
+.editor-field__label {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.input--compact {
+  height: 34px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.activity-editor__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.activity-editor__foot > * {
+  margin: 0 8px 4px 0;
+}
+
+.activity-editor__tip {
+  color: #8b929c;
 }
 
 /* ---------- 状态徽标 ---------- */
@@ -1218,6 +1280,140 @@
   width: 15px;
   height: 15px;
   accent-color: var(--accent);
+}
+
+/* 活动偏好：四个可勾的胶囊。
+   用子项 margin 而不是容器的 gap —— 和本文件其他列表同一套理由
+   （Chrome 74 的 WebView 不认容器 gap，真机上会挤成一串）。 */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 8px 8px 0;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.chip:hover {
+  border-color: #c9cfd8;
+}
+
+.chip--active {
+  border-color: var(--accent);
+  background: #eef3ff;
+  color: #1f4fa8;
+}
+
+.chip input {
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  accent-color: var(--accent);
+}
+
+/* ---------- 自定义活动类型 ----------
+   内置四类用胶囊（短、纯标签）；自定义活动用一行一条：
+   它多一段说明，而且多了「删除」这个动作，塞进胶囊里会挤成一团。
+   布局一律用子项 margin 而不是容器 gap：Android 10 的 WebView（Chrome 74）
+   不认 flex 容器上的 gap，写上去在手机上看就是"全挤在一起"。 */
+
+.type-list {
+  margin-bottom: 8px;
+}
+
+.type-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.type-row--active {
+  border-color: var(--accent);
+  background: #eef3ff;
+}
+
+.type-row__main {
+  display: flex;
+  align-items: baseline;
+  flex: 1 1 auto;
+  /* 不加 min-width: 0，长标题在 flex 子项里不会省略，直接把删除按钮挤出去 */
+  min-width: 0;
+  cursor: pointer;
+}
+
+.type-row__main input {
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  accent-color: var(--accent);
+}
+
+.type-row__title {
+  margin-right: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.type-row__desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.type-row__remove {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.type-row__remove:hover {
+  color: #c0392b;
+}
+
+/* 添加一行：两个输入 + 一个按钮。窄屏上自动换行，按钮落到下一行 */
+.type-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.type-add .input {
+  flex: 1 1 170px;
+  min-width: 0;
+  margin: 0 8px 8px 0;
+}
+
+.type-add .button {
+  margin-bottom: 8px;
 }
 
 .settings__actions {
@@ -1772,16 +1968,31 @@
   margin: 8px 0 0;
 }
 
+/* 未生成状态：只有按钮和一句说明。打开面板不会自动生成，
+   所以这里要明确告诉用户"先点一下才会有东西"。 */
+.suggestions__idle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.suggestions__idle > * {
+  margin: 0 10px 6px 0;
+}
+
 .suggestion-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-/* 时间 / 内容 / 按钮组。按钮组窄一点，窄屏时整组换到下一行 */
+/* 时间 / 内容 / 按钮组。按钮组窄一点，窄屏时整组换到下一行。
+   第一列从 52px 放宽：时间不再是纯文本，而是一个可改的 <input type="time">，
+   52px 装不下 10:00 加时钟图标。 */
 .suggestion {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) auto;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
   align-items: start;
   padding: 10px 0;
   border-bottom: 1px solid var(--border);
@@ -1793,6 +2004,35 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
+}
+
+/* 建议行上的时间可以直接改。做成"看起来还能看出是时间"的输入框，
+   而不是一个明显的表单控件 —— 它首先是给人读的，其次才是可改的。 */
+.suggestion__time-input {
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.suggestion__time-input:hover:not(:disabled) {
+  border-color: var(--border);
+  background: #fff;
+}
+
+.suggestion__time-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(47, 111, 235, 0.15);
+}
+
+.suggestion__time-input:disabled {
+  color: var(--muted);
 }
 
 .suggestion__body {
@@ -1881,7 +2121,7 @@
 
 @media (max-width: 520px) {
   .suggestion {
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: 88px minmax(0, 1fr);
   }
 
   /* 手机上按钮组占满一整行：挤在右边只剩一两个字宽，更容易点错 */
@@ -1894,6 +2134,11 @@
 
   .suggestion__actions > * {
     margin: 0 6px 4px 0;
+  }
+
+  /* 编辑表单在手机上排不下四列：时间/时长/状态挤成两列，标题和说明各占整行 */
+  .activity-editor__grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 

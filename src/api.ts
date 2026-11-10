@@ -4,6 +4,7 @@ import type {
   ActivityDraft,
   ActivityRuleset,
   ActivitySettings,
+  ActivityUpdate,
   AgentInfo,
   ConfirmResult,
   DailySummary,
@@ -242,6 +243,13 @@ export function skipActivity(id: number, reason?: string): Promise<OperationResu
     method: 'POST',
     body: { reason: reason ?? null },
   })
+}
+
+// 手动改一条安排：时间 / 内容 / 状态，只传要改的字段（PATCH 语义）。
+// 时间改了后端会重新过同一套 validate_slot，所以改到免打扰或撞上别的安排会 422，
+// 报错里带 X-Rule-Code，页面按码提示"去改哪一段"。
+export function updateActivity(id: number, patch: ActivityUpdate): Promise<Activity> {
+  return request<Activity>(`/activity/${id}`, { method: 'PATCH', body: patch })
 }
 
 export function fetchWeeklyStats(): Promise<WeeklyStats> {

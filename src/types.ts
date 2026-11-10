@@ -86,7 +86,32 @@ export type Tab = 'activity' | 'todo' | 'summary'
 // 四个字面量与后端 ActivityOut.status 一一对应，
 // 少写一个就会在状态徽标那里漏掉分支（tsc 会报 exhaustive 相关的错）。
 export type ActivityStatus = 'planned' | 'completed' | 'postponed' | 'skipped'
-export type ActivityType = 'walk' | 'water' | 'stretch' | 'stand'
+/** 内置四类。它们在后端是常量（`rules.ACTIVITY_CATALOG`），删不掉 */
+export type BuiltinActivityType = 'walk' | 'water' | 'stretch' | 'stand'
+/**
+ * 活动类型。
+ *
+ * 第十天起**不再是固定四类**：用户可以在设置页里自己加（key 形如 `custom_1`），
+ * 后端把内置四类和自定义合并成一份目录。所以这里放开成 string ——
+ * 收窄成四个字面量的话，自定义类型的活动在列表上会直接写不进 `Activity` 类型。
+ *
+ * `(string & {})` 而不是 `string`：前者保留四个内置值的补全与拼写检查，
+ * 后者一写就全丢。
+ */
+export type ActivityType = BuiltinActivityType | (string & {})
+
+/**
+ * 一条自定义活动类型。
+ *
+ * `key` 是稳定标识，`activities.activity_type` 和 `preferred_types` 都按它引用。
+ * 改标题不能改 key —— 否则历史记录里的类型会变成查不到名字的孤儿。
+ */
+export type CustomActivityType = {
+  key: string
+  title: string
+  /** 可以留空；后端会用标题顶上，保证每条安排都有一行说明 */
+  description: string
+}
 export type ActivitySource = 'rule' | 'agent'
 
 export type Activity = {
@@ -110,7 +135,18 @@ export type ActivityWindow = {
   end: string
 }
 
-// 提交给 PUT /activity/settings 的形状。
+// PATCH /activity/{id} 的请求体：只传要改的字段。
+// 状态到 completed / skipped 为止，没有 postponed ——
+// 那个状态只能由「推迟」这条路径产生（它会同时新增一条替代记录）。
+export type ActivityUpdate = {
+  // 带 +08:00 偏移的完整 ISO 串。只给 HH:MM 的话后端猜不出是哪一天
+  scheduled_at?: string
+  title?: string
+  description?: string
+  activity_type?: ActivityType
+  duration_min?: number
+  status?: 'planned' | 'completed' | 'skipped'
+}// 提交给 PUT /activity/settings 的形状。
 // 响应里还多一个 user_id，前端用不到，故意不声明（结构类型允许多余字段）。
 export type ActivitySettings = {
   work_start: string
@@ -122,6 +158,25 @@ export type ActivitySettings = {
   allow_during_work: boolean
   daily_target: number
   postpone_policy: 'next_slot' | 'ask'
+  // 偏好三项（后端 R2-3）。三个都不是"约束"而是参数：
+  // - preferred_types 只影响推荐时挑哪几类，空数组 = 全都接受（等于没偏好）；
+  // - duration_min / min_gap_min 真的参与排程计算（排点之间的间距就是它们算出来的）。
+  //
+  // 这三个字段必须一起提交：后端 SettingsIn 的默认值是"空/5/10"，
+  // 少传就等于每次保存都把用户设过的偏好重置掉。
+  //
+  // preferred_types 里可以出现自定义类型的 key（custom_1 …），
+  // 所以是 string[] 而不是 BuiltinActivityType[]。
+  preferred_types: ActivityType[]
+  /**
+   * 自定义活动类型（第十天）。**整份覆盖**：传什么就是什么，删掉一个就是真删掉。
+   *
+   * 和上面三项一样必须每次一起提交 —— 漏传会被后端当成"用户把自定义活动全删了"，
+   * 而且没有任何报错，只是那些活动下次就不见了。
+   */
+  custom_types: CustomActivityType[]
+  duration_min: number
+  min_gap_min: number
 }
 
 export type ActivityDay = {
@@ -141,9 +196,8 @@ export type WeeklyStats = {
 }
 
 // 建议草稿的响应形状随"安排建议"面板在第六天下线过：那时生成是一次点击直接落库，
-// 中间那层草稿不经过前端。第八天它回来了，但目的变了 —— 现在要的是**逐条决策**：
-// 每行直接给「完成 / 稍后 / 不方便」，不必先存成待执行再点一次。
-// 草稿仍然是草稿，只有用户点了某一行才落库。
+// 中间那层草稿不经过前端。第八天它回来了，但目的变了 —— 现在要的是**逐条决策**。
+// 草稿仍然是草稿，只有用户点了「同意」才落库；「拒绝」只丢掉这一条候选，不写库。
 //
 // 与后端 SuggestOut / DraftOut / ConfirmOut 一一对应（app/routers/activity.py）。
 export type ActivityDraft = {
@@ -155,7 +209,8 @@ export type ActivityDraft = {
   reason: string
 }
 
-// 三个按钮对应三个落库状态。前端只说"用户点了哪个按钮"，
+// 后端的决策仍是三档（见 service.DECISION_STATUS），但**页面只发 later**：
+// 「同意」= 存成待执行，之后的完成/不方便改到下面的安排列表里做（PATCH 或那几个按钮）。
 // 状态怎么映射由后端决定（DECISION_STATUS），页面不碰状态机。
 export type SuggestionDecision = 'later' | 'done' | 'skip'
 

@@ -1,6 +1,18 @@
 import { useEffect, useState } from 'react'
 import { ApiError, previewActivityRules, saveActivitySettings } from '../api'
-import type { ActivityRuleset, ActivitySettings, ActivityWindow } from '../types'
+import {
+  MAX_CUSTOM_TYPES,
+  MAX_TYPE_DESCRIPTION,
+  MAX_TYPE_TITLE,
+  nextCustomKey,
+  typeOptions,
+} from '../activityTypes'
+import type {
+  ActivityRuleset,
+  ActivitySettings,
+  CustomActivityType,
+  ActivityWindow,
+} from '../types'
 
 type Props = {
   settings: ActivitySettings | null
@@ -19,6 +31,10 @@ function windowSummary(windows: ActivityWindow[]): string {
  *
  * 不整个对象发过去：``ActivitySettings`` 从服务端读回来时会带 ``user_id``，
  * 原样回传等于让客户端告诉服务端"我是谁"——虽然后端不读它，但这种形状不该存在。
+ *
+ * 偏好三项 + 自定义活动必须带上。后端 ``SettingsIn`` 里它们有默认值（空 / 5 / 10 / 空），
+ * 漏传不会报错，只会**静默把用户设过的东西重置**——这类失败没有任何提示，
+ * 用户下次看到"为什么又给我排拉伸"时根本联想不到是保存设置导致的。
  */
 function payloadOf(value: ActivitySettings): ActivitySettings {
   return {
@@ -31,12 +47,33 @@ function payloadOf(value: ActivitySettings): ActivitySettings {
     allow_during_work: value.allow_during_work,
     daily_target: value.daily_target,
     postpone_policy: value.postpone_policy,
+    preferred_types: value.preferred_types,
+    custom_types: value.custom_types,
+    duration_min: value.duration_min,
+    min_gap_min: value.min_gap_min,
   }
 }
 
 function rangeText(ranges: { start: string; end: string }[]): string {
   if (ranges.length === 0) return '无'
   return ranges.map((item) => `${item.start}-${item.end}`).join('、')
+}
+
+/**
+ * 补齐偏好三项与自定义活动。
+ *
+ * 正常情况下后端一定给（SettingsOut 就带这几个字段），但这一层不能赌：
+ * 少一个字段，下面 ``draft.preferred_types.includes(...)`` 就会抛 TypeError，
+ * 整页白屏 —— 而这只是"设置面板少了几个控件"的程度。默认值与后端一致。
+ */
+function normalize(value: ActivitySettings): ActivitySettings {
+  return {
+    ...value,
+    preferred_types: value.preferred_types ?? [],
+    custom_types: value.custom_types ?? [],
+    duration_min: value.duration_min ?? 5,
+    min_gap_min: value.min_gap_min ?? 10,
+  }
 }
 
 /**
@@ -47,12 +84,21 @@ function rangeText(ranges: { start: string; end: string }[]): string {
  */
 export default function SettingsPanel({ settings, onSaved, onError }: Props) {
   const [open, setOpen] = useState(false)
-  const [draft, setDraft] = useState<ActivitySettings | null>(settings)
+  const [draft, setDraft] = useState<ActivitySettings | null>(settings ? normalize(settings) : null)
   const [synced, setSynced] = useState<ActivitySettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [localError, setLocalError] = useState('')
   const [ruleset, setRuleset] = useState<ActivityRuleset | null>(null)
   const [rulesError, setRulesError] = useState('')
+  /**
+   * 「添加自定义活动」两格输入。
+   *
+   * 放在草稿之外（独立 state）而不是塞进 draft.custom_types：填了一半的输入框
+   * 还不是一条活动，混进列表里就会被一起提交、被偏好勾选、被排程选中。
+   */
+  const [newTypeTitle, setNewTypeTitle] = useState('')
+  const [newTypeDesc, setNewTypeDesc] = useState('')
+  const [typeError, setTypeError] = useState('')
 
   // 后端返回（首次加载 / 保存成功后）以服务端为准覆盖本地草稿，
   // 避免用户改了没保存、然后列表刷新把脏值又带回来。
@@ -64,7 +110,7 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
   // 服务端返回的旧设置会把没保存的修改无声抹掉。
   if (settings !== synced) {
     setSynced(settings)
-    if (!open) setDraft(settings)
+    if (!open) setDraft(settings ? normalize(settings) : settings)
   }
 
   /**
@@ -123,6 +169,92 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
     })
   }
 
+  /**
+   * 勾/取消一类活动。
+   *
+   * 全不勾 = 所有类型都接受，不是"什么都别排"。这个语义在后端
+   * （``allowed_activity_types``）和设置里的说明都写成一样，前端不许自己发明第三种解释。
+   */
+  function toggleType(type: string) {
+    setDraft((prev) => {
+      if (!prev) return prev
+      const picked = prev.preferred_types.includes(type)
+        ? prev.preferred_types.filter((item) => item !== type)
+        : [...prev.preferred_types, type]
+      return { ...prev, preferred_types: picked }
+    })
+  }
+
+  /**
+   * 加一条自定义活动。
+   *
+   * 顺序：校验 → 生 key → 追加 → 视情况勾进偏好。
+   *
+   * 最后一步是最容易被漏掉的："加了却没有被推荐"比"根本没加"更让人困惑。
+   * 两种情况分开处理：
+   *
+   * - 偏好**非空**（用户已经勾了"只排这几类"）→ **自动勾上**。不勾的话，
+   *   后端严格按偏好挑，用户刚加的活动永远排不出来（第十天真实踩过：
+   *   四类全勾着再加"喝咖啡"，推荐里一份都不出来）。
+   * - 偏好**为空**（= 全都接受）→ 不勾。勾上会把语义从"全都接受"变成
+   *   "只排这一个"，而用户点的只是「添加」。
+   */
+  function addCustomType() {
+    if (!draft) return
+    const title = newTypeTitle.trim()
+    if (!title) {
+      setTypeError('先给它起个名字，例如「去楼下买咖啡」。')
+      return
+    }
+    if (title.length > MAX_TYPE_TITLE) {
+      setTypeError(`标题最多 ${MAX_TYPE_TITLE} 个字。`)
+      return
+    }
+    if (draft.custom_types.length >= MAX_CUSTOM_TYPES) {
+      setTypeError(`最多 ${MAX_CUSTOM_TYPES} 个自定义活动。`)
+      return
+    }
+    // 标题重复直接拒：列表上是按标题认的，两个一样的分不清该勾哪个。
+    // 后端允许重名（它按 key 区分），所以这条只能在界面上拦。
+    if (draft.custom_types.some((item) => item.title === title)) {
+      setTypeError('已经有一条叫这个名字的活动了。')
+      return
+    }
+
+    const next: CustomActivityType = {
+      key: nextCustomKey(draft.custom_types),
+      title,
+      description: newTypeDesc.trim().slice(0, MAX_TYPE_DESCRIPTION),
+    }
+    setDraft({
+      ...draft,
+      custom_types: [...draft.custom_types, next],
+      preferred_types:
+        draft.preferred_types.length > 0
+          ? [...draft.preferred_types, next.key]
+          : draft.preferred_types,
+    })
+    setNewTypeTitle('')
+    setNewTypeDesc('')
+    setTypeError('')
+  }
+
+  /**
+   * 删一条自定义活动。
+   *
+   * 顺手把它从偏好里摘掉：不摘的话偏好里会留一个失效 key，
+   * 排程时被忽略（后端不会报错），但设置页上那条说明会一直显示着一个不存在的活动名。
+   */
+  function removeCustomType(key: string) {
+    if (!draft) return
+    setDraft({
+      ...draft,
+      custom_types: draft.custom_types.filter((item) => item.key !== key),
+      preferred_types: draft.preferred_types.filter((item) => item !== key),
+    })
+    setTypeError('')
+  }
+
   function addWindow() {
     setDraft((prev) => {
       if (!prev || prev.windows.length >= 6) return prev
@@ -145,6 +277,11 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
 
   /** 跨字段校验：pydantic 只管单字段格式，"结束要晚于开始"必须在这里先挡一次。 */
   function validate(value: ActivitySettings): string {
+    // 输入框里有内容但没点「添加」：保存会把它一起丢掉，而用户以为已经加上了。
+    // 拦住比"保存成功但活动没进来"好解释 —— 后者要过一周才会被发现。
+    if (newTypeTitle.trim()) {
+      return '自定义活动还没加进列表：先点「添加」或按回车，或者清空那个输入框再保存。'
+    }
     if (value.work_start >= value.work_end) return '工作结束时间必须晚于开始时间。'
     if (value.windows.length === 0) return '至少保留一个可活动时段。'
     for (const item of value.windows) {
@@ -156,6 +293,26 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
       return '免打扰的开始和结束时间需要成对填写。'
     }
     if (value.daily_target < 1 || value.daily_target > 8) return '每天次数需要在 1 到 8 之间。'
+    // 范围和后端 validate_settings 一致，先在这里挡一次，省掉一次往返
+    if (!Number.isFinite(value.duration_min) || value.duration_min < 1 || value.duration_min > 30) {
+      return '单次时长需要在 1 到 30 分钟之间。'
+    }
+    if (!Number.isFinite(value.min_gap_min) || value.min_gap_min < 0 || value.min_gap_min > 120) {
+      return '两条之间的最小间隔需要在 0 到 120 分钟之间。'
+    }
+    // 自定义活动：添加时已经拦过，这里再挡一次是因为草稿可能来自服务端
+    // （例如另一个页面刚存过一条不合规的数据）。范围和后端
+    // service.clean_custom_types 完全一致，先在这里挡掉一次往返。
+    if (value.custom_types.length > MAX_CUSTOM_TYPES) {
+      return `最多 ${MAX_CUSTOM_TYPES} 个自定义活动。`
+    }
+    for (const item of value.custom_types) {
+      if (!item.title.trim()) return '自定义活动需要有名字。'
+      if (item.title.length > MAX_TYPE_TITLE) return `标题最多 ${MAX_TYPE_TITLE} 个字。`
+      if (item.description.length > MAX_TYPE_DESCRIPTION) {
+        return `说明最多 ${MAX_TYPE_DESCRIPTION} 个字。`
+      }
+    }
     return ''
   }
 
@@ -186,6 +343,18 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
 
   const quietText =
     draft.quiet_start && draft.quiet_end ? `${draft.quiet_start}-${draft.quiet_end}` : '未设置'
+
+  // 可选类型在渲染前算一次：内置四类 + 自定义，下面两处都用它。
+  // 每次 `.map` 里现算会得到新数组，React 的 key 虽然还在，
+  // 但"勾选后那一格要不要重画"只能靠 diff，没必要多这一层开销
+  const typeChoices = typeOptions(draft)
+  const builtinChoices = typeChoices.filter((option) => !option.custom)
+  const preferredText =
+    draft.preferred_types.length === 0
+      ? '下面这些都可以被推荐'
+      : `只排：${draft.preferred_types
+          .map((item) => typeChoices.find((opt) => opt.value === item)?.label ?? item)
+          .join('、')}`
 
   return (
     <section className="settings">
@@ -318,6 +487,171 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
             </label>
           </div>
 
+          {/*
+            偏好（R2-3）。这一块之前只有后端有、前端没有界面：
+            用户根本设不了，而且每次点「保存设置」都会把它们重置成默认值
+            （payloadOf 漏传这三个字段 → pydantic 用默认值兜底）。
+            现在补齐，并且三者一起提交。
+
+            第十天起"四类"这个说法不再成立：可选类型 = 内置四类 + 用户自己加的。
+            自定义活动不做成另一种控件 —— 它们和内置四类一样是被勾选的对象，
+            只是多了「说明」和「删除」。
+          */}
+          <div className="settings__group">
+            <div className="settings__group-head">
+              <span className="field__label">活动偏好</span>
+              <span className="hint hint--small">{preferredText}</span>
+            </div>
+
+            <div className="chips">
+              {builtinChoices.map((option) => {
+                const checked = draft.preferred_types.includes(option.value)
+                return (
+                  <label key={option.value} className={checked ? 'chip chip--active' : 'chip'}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleType(option.value)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                )
+              })}
+            </div>
+
+            <div className="type-list">
+              {draft.custom_types.map((item) => {
+                const checked = draft.preferred_types.includes(item.key)
+                return (
+                  <div className={checked ? 'type-row type-row--active' : 'type-row'} key={item.key}>
+                    <label className="type-row__main">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleType(item.key)}
+                      />
+                      <span className="type-row__title">{item.title}</span>
+                      <span className="type-row__desc">
+                        {item.description || '（没有说明，会直接用标题）'}
+                      </span>
+                    </label>
+                    <button
+                      className="type-row__remove"
+                      type="button"
+                      onClick={() => removeCustomType(item.key)}
+                      aria-label={`删除自定义活动「${item.title}」`}
+                    >
+                      删除
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/*
+              自定义活动：用户原话是"不需要是固定这四大类"。
+              加进来的活动会立刻参与轮换（偏好为空时排在四类之后），
+              勾上偏好就只排它。key 由 nextCustomKey 生成且保持不变，
+              所以改标题不会让历史记录里的类型变成孤儿。
+            */}
+            <div className="type-add">
+              <input
+                className="input input--compact"
+                type="text"
+                value={newTypeTitle}
+                maxLength={MAX_TYPE_TITLE}
+                placeholder="加一个自己的活动，例如：去楼下买咖啡"
+                aria-label="自定义活动名称"
+                onChange={(event) => {
+                  setNewTypeTitle(event.target.value)
+                  setTypeError('')
+                }}
+                onKeyDown={(event) => {
+                  // 回车即添加：这里是一行输入，不是表单，没必要逼用户去点按钮
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    addCustomType()
+                  }
+                }}
+              />
+              <input
+                className="input input--compact"
+                type="text"
+                value={newTypeDesc}
+                maxLength={MAX_TYPE_DESCRIPTION}
+                placeholder="一句说明（可不填）"
+                aria-label="自定义活动说明"
+                onChange={(event) => setNewTypeDesc(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    addCustomType()
+                  }
+                }}
+              />
+              <button
+                className={
+                  newTypeTitle.trim()
+                    ? 'button button--primary button--small'
+                    : 'button button--ghost button--small'
+                }
+                type="button"
+                onClick={addCustomType}
+                disabled={draft.custom_types.length >= MAX_CUSTOM_TYPES}
+                title={
+                  draft.custom_types.length >= MAX_CUSTOM_TYPES
+                    ? `最多 ${MAX_CUSTOM_TYPES} 个`
+                    : '添加到上面的列表'
+                }
+              >
+                添加
+              </button>
+            </div>
+
+            {/*
+              输入框填了字但没点「添加」时给一句提示。
+              第十天真实踩过：用户把「喜欢咖啡，给我安排一个喝咖啡的」打进框里，
+              以为已经加好了，然后问"为什么推荐里没有咖啡"。
+              回车和按钮都能加，但没人知道这件事 —— 写出来比让他猜便宜得多。
+            */}
+            {newTypeTitle.trim() && (
+              <p className="hint hint--small">
+                还没加进去 —— 点「添加」或按回车，它才会出现在上面的列表里并参与推荐。
+              </p>
+            )}
+
+            {typeError && (
+              <p className="hint hint--warn" role="alert">
+                {typeError}
+              </p>
+            )}
+
+            <div className="settings__row">
+              <label className="settings__field">
+                <span className="field__label">单次时长（分钟）</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={draft.duration_min}
+                  onChange={(event) => patch({ duration_min: Number(event.target.value) })}
+                />
+              </label>
+              <label className="settings__field">
+                <span className="field__label">两条之间至少间隔（分钟）</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={120}
+                  value={draft.min_gap_min}
+                  onChange={(event) => patch({ min_gap_min: Number(event.target.value) })}
+                />
+              </label>
+            </div>
+          </div>
+
           <label className="settings__check">
             <input
               type="checkbox"
@@ -388,7 +722,7 @@ export default function SettingsPanel({ settings, onSaved, onError }: Props) {
               className="button button--ghost"
               type="button"
               onClick={() => {
-                setDraft(settings)
+                setDraft(settings ? normalize(settings) : settings)
                 setLocalError('')
               }}
               disabled={saving}

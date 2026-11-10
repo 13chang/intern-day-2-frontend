@@ -7,11 +7,12 @@ import {
   fetchDayActivities,
   fetchSuggestionEngines,
   fetchWeeklyStats,
-  generateDay,
   postponeActivity,
   skipActivity,
+  updateActivity,
 } from '../api'
 import ActivityAssistant from '../agent/ActivityAssistant'
+import { typeLabels } from '../activityTypes'
 import AssistantBoundary from '../components/AssistantBoundary'
 import ActivityCard from '../components/ActivityCard'
 import type { ActivityAction } from '../components/ActivityCard'
@@ -24,6 +25,7 @@ import { ruleHint } from '../rules'
 import type {
   Activity,
   ActivitySettings,
+  ActivityUpdate,
   OverviewResult,
   SuggestionEngine,
   SuggestionEngineInfo,
@@ -84,15 +86,15 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
   const [note, setNote] = useState('')
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<number | null>(null)
-  const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   /**
-   * 是否展开建议列表。
+   * 是否展开建议面板。
    *
-   * 为什么两种入口都留着：「生成安排」是一条点击直接落库（第六天的验收项，
-   * 手机上"帮我排好就行"也确实更快）；「先看建议」是先出草稿、逐条决策，
-   * 点错了还能 5 秒内撤销。硬把其中一个换掉，就会有人失去他习惯的那条路。
+   * 这里曾经还有一个「生成安排」按钮：一点就直接落库，不经过用户确认。
+   * 它和「先看建议」并存时，用户在建议里点的"完成 / 不方便"也会写进同一个列表，
+   * 于是"我拒绝的"和"我定了的"混在一起。现在只保留一条路：
+   * **面板里点同意才落库**，撤销只在这条路上成立。
    */
   const [showSuggestions, setShowSuggestions] = useState(false)
 
@@ -161,36 +163,6 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
     setError('')
   }
 
-  async function handleGenerate() {
-    if (generating) return
-    // 还有待执行的条目 → 走后端的 force 重建：只清那天待执行的，已完成/已推迟/已跳过保留
-    const force = activities.some((item) => item.status === 'planned')
-    setGenerating(true)
-    setError('')
-    setNotice('')
-    try {
-      const result = await generateDay(force, day, {
-        engine,
-        // 规则引擎不读偏好，别把它传上去假装生效了
-        note: engine === 'llm' ? note.trim() : undefined,
-      })
-      const who = result.mode === 'llm' ? 'DeepSeek' : '本地规则'
-      const parts: string[] = []
-      if (result.created > 0) {
-        parts.push(`已用「${who}」为${dayName(result.day || day, today)}生成 ${result.created} 条安排。`)
-      }
-      // 模型的排程理由单独说，和"生成了几条"是两件事
-      if (result.explanation) parts.push(result.explanation)
-      if (result.notice) parts.push(result.notice)
-      setNotice(parts.join(' '))
-      await load()
-    } catch (err) {
-      handleError(err, '生成安排失败')
-    } finally {
-      setGenerating(false)
-    }
-  }
-
   function handlePickEngine(next: SuggestionEngine) {
     if (next === engine) return
     setEngine(next)
@@ -227,8 +199,49 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
     }
   }
 
+  /**
+   * 保存手动修改（时间 / 内容 / 状态）。
+   *
+   * 失败时把错误再抛回卡片：卡片靠它决定"保持编辑态"。不然用户填了半天的表单
+   * 被一次 422 关掉，还得重新打开、重新填 —— 而错误其实只出在时间那一格。
+   * 文案仍由 handleError 统一显示（409/422 的中文直接来自后端）。
+   */
+  async function handleUpdate(id: number, patch: ActivityUpdate) {
+    setBusyId(id)
+    setError('')
+    setNotice('')
+    try {
+      const updated = await updateActivity(id, patch)
+      setNotice(`已保存：${updated.scheduled_at.slice(11, 16)} ${updated.title}`)
+      await load()
+    } catch (err) {
+      handleError(err, '保存修改失败')
+      throw err
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   const pending = activities.filter((item) => item.status === 'planned')
   const completed = activities.filter((item) => item.status === 'completed')
+
+  // 类型徽标的名字来自设置（内置四类 + 用户自定义），在渲染前算一次
+  const labels = typeLabels(settings)
+
+  /**
+   * 影响排程的设置指纹：偏好 / 自定义活动 / 时长 / 间隔。
+   *
+   * 用拼接出来的字符串，不用 settings 对象：`load()` 每次都给出新对象，
+   * 拿它当依赖会让"点完成一条"也把整批候选清掉。字符串只在值真的变了才变。
+   */
+  const settingsKey = settings
+    ? [
+        settings.preferred_types.join(','),
+        settings.custom_types.map((item) => `${item.key}:${item.title}`).join(','),
+        settings.duration_min,
+        settings.min_gap_min,
+      ].join('|')
+    : ''
 
   // 接下来要做的那一条：列表本来就按 scheduled_at 排序。
   // 只有今天才按钟点筛"还没到"；未来那天的钟点全都还没到，无脑取第一条即可。
@@ -257,11 +270,11 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
               <p className="hint">{summary}</p>
             </div>
             <div className="generate-bar">
-              {/* 引擎选择放在生成按钮旁边：点下去之前就知道这批是谁排的。
-                  只剩一个"生成安排"按钮的话，用户没法表达"这次让模型试试"。 */}
+              {/* 引擎选择放在这里：点「生成建议」之前就知道这批是谁排的。
+                  这个选择只影响建议面板里那一次生成，不会自己跑起来。 */}
               <div className="engine-picker" role="group" aria-label="生成引擎">
                 {engines.map((item) => {
-                  const disabled = !item.available || generating || loading
+                  const disabled = !item.available || loading
                   return (
                     <button
                       key={item.id}
@@ -285,25 +298,16 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
                   )
                 })}
               </div>
+              {/* 唯一入口：打开面板，生成要用户自己在面板里点。
+                  原来那个「生成安排」是直写库的，已经删掉 —— 安排只能从"同意"进来。 */}
               <button
                 className="button button--primary"
-                type="button"
-                onClick={() => void handleGenerate()}
-                disabled={generating || loading}
-                title={`为 ${day} 生成安排`}
-              >
-                {generating ? '生成中…' : pending.length > 0 ? '重新生成' : '生成安排'}
-              </button>
-              {/* 两个入口不是重复：上面那个一条点击直接排好（快），
-                  这个先出草稿、每行自己决定完成/稍后/不方便（可控） */}
-              <button
-                className="button button--ghost"
                 type="button"
                 onClick={() => setShowSuggestions((open) => !open)}
                 disabled={loading}
                 aria-expanded={showSuggestions}
               >
-                {showSuggestions ? '收起建议' : '先看建议'}
+                {showSuggestions ? '收起建议' : '安排建议'}
               </button>
             </div>
           </header>
@@ -318,7 +322,6 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
               maxLength={200}
               placeholder="想让 DeepSeek 额外考虑什么？（可不填，例如：下午容易困、只排两次）"
               onChange={(event) => setNote(event.target.value)}
-              disabled={generating}
               aria-label="给 DeepSeek 的偏好"
             />
           )}
@@ -347,6 +350,7 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
               day={day}
               engine={engine}
               note={note}
+              settingsKey={settingsKey}
               onSaved={() => void load()}
               onError={handleError}
               onClose={() => setShowSuggestions(false)}
@@ -357,8 +361,8 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
             <p className="hint state-line">正在加载安排…</p>
           ) : activities.length === 0 ? (
             <p className="hint state-line">
-              {isToday ? '今天' : '这天'}还没有安排。点右上角「生成安排」，会按可活动时段排{' '}
-              {settings?.daily_target ?? 3} 次。
+              {isToday ? '今天' : '这天'}还没有安排。点右上角「安排建议」，在面板里生成候选、
+              逐条点「同意」才会写进来；按可活动时段一次给 {settings?.daily_target ?? 3} 条。
             </p>
           ) : (
             <ul className="activity-list">
@@ -366,11 +370,13 @@ export default function ActivityPage({ user, onLogout, onExpired, onTabChange }:
                 <ActivityCard
                   key={item.id}
                   activity={item}
-                  disabled={busyId !== null || generating}
+                  disabled={busyId !== null}
                   busy={busyId === item.id}
+                  typeLabels={labels}
                   // 提醒关掉就不高亮：验收第 10 条要求开关真的起作用，而不只是个摆设
                   highlight={Boolean(settings?.reminders_enabled) && item.id === nextPlanned?.id}
                   onAction={(id, action) => void handleAction(id, action)}
+                  onUpdate={handleUpdate}
                 />
               ))}
             </ul>

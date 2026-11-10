@@ -4,23 +4,23 @@ import {
   confirmActivitySuggestions,
   fetchActivitySuggestions,
   fetchReshuffleQuota,
-  reshuffleActivitySuggestion,
   undoActivity,
 } from '../api'
 import { ruleHint } from '../rules'
-import type {
-  ActivityDraft,
-  SuggestionDecision,
-  SuggestionEngine,
-} from '../types'
+import type { ActivityDraft, SuggestionEngine } from '../types'
 
 /**
- * 建议列表：草稿先给人看，用户点了才算数。
+ * 建议列表：草稿先给人看，**点了「同意」才算数**。
  *
- * 为什么值得单独一层（第六天曾经把它下线过）：那时候点「生成安排」直接落库，
- * 用户想表达"这条我不想做"只能先生成、再去列表里点跳过 —— 中间多一次写入。
- * 现在每一行直接给「完成 / 稍后 / 不方便」，点哪个就按哪个状态存，
- * 而且 5 秒内可以撤销（[撤销] 会真的把那条记录删掉，不是只改界面）。
+ * 为什么改成两个按钮（同意 / 拒绝）：
+ *
+ * 以前每行是「完成 / 稍后做 / 不方便」，点哪个都会立刻写库并出现在下面的安排列表里。
+ * 结果就是"我明明点了不方便，它怎么排在今天的日程里" —— 否决和建议混在一处，
+ * 用户看不出"哪些是我定了的、哪些只是给我看的"。
+ *
+ * 现在是**两道闸**：建议区只回答"这一条要不要"，点同意才落库（存成待执行），
+ * 点拒绝就当场丢掉、不写库；落库之后要标完成/改时间，都在下面的安排列表里做。
+ * 时间可以直接在这一行改（只改钟点，日期跟着这一天），改完仍要过后端规则校验。
  */
 
 type Props = {
@@ -28,6 +28,17 @@ type Props = {
   engine: SuggestionEngine
   /** 只给 llm 用：这次想让模型额外考虑什么 */
   note: string
+  /**
+   * 影响排程的设置指纹（活动偏好 / 自定义活动 / 时长 / 间隔）。
+   *
+   * 为什么需要它：候选是在某一份设置下算出来的。用户改完偏好（比如刚加了一种
+   * 自定义活动）再回来看，屏幕上还是上一批候选 —— 看起来就像"加了没用"。
+   * 指纹变了就退回未生成状态，逼着重新算一次。
+   *
+   * 传的是字符串而不是 settings 对象：对象每次 `load()` 都是新引用，
+   * 用它当依赖会让"点完成一条"也把整批候选清掉，那是另一个 bug。
+   */
+  settingsKey: string
   /** 有东西落库了（列表、统计都要重拉） */
   onSaved: () => void
   onError: (error: unknown, fallback: string) => void
@@ -37,18 +48,17 @@ type Props = {
 /** 撤销窗口，和后端 UNDO_WINDOW_SECONDS 一致。前端只负责显示，能不能撤由后端判。 */
 const UNDO_MS = 5000
 
-const DECISION_LABEL: Record<SuggestionDecision, string> = {
-  done: '已完成',
-  later: '待执行',
-  skip: '今天不方便',
-}
-
 function hhmm(iso: string): string {
   return iso.slice(11, 16)
 }
 
 function byTime(a: ActivityDraft, b: ActivityDraft): number {
   return a.scheduled_at.localeCompare(b.scheduled_at)
+}
+
+/** 只换钟点，日期和偏移照抄（同 ActivityCard 里的同名逻辑，理由见那边注释）。 */
+function withTime(iso: string, clock: string): string {
+  return `${iso.slice(0, 11)}${clock}:00${iso.slice(19)}`
 }
 
 /**
@@ -68,26 +78,48 @@ function isUnauthorized(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401
 }
 
-export default function SuggestionPanel({ day, engine, note, onSaved, onError, onClose }: Props) {
+export default function SuggestionPanel({
+  day,
+  engine,
+  note,
+  settingsKey,
+  onSaved,
+  onError,
+  onClose,
+}: Props) {
   const [drafts, setDrafts] = useState<ActivityDraft[]>([])
   const [explanation, setExplanation] = useState('')
   const [engineNote, setEngineNote] = useState('')
   const [evidence, setEvidence] = useState<string[]>([])
   const [notice, setNotice] = useState('')
   const [engineError, setEngineError] = useState('')
-  const [loading, setLoading] = useState(true)
+  /**
+   * 是否已经生成过。
+   *
+   * 打开面板**不再自动生成**：生成要么烧一次 DeepSeek 调用，要么按规则算一批可能
+   * 用户根本不想要的东西，然后还得逐条拒绝。所以先停在这里，等用户自己点「生成建议」。
+   */
+  const [started, setStarted] = useState(false)
+  const [loading, setLoading] = useState(false)
   /** 正在处理的行下标；整批操作时用 -1 */
   const [busy, setBusy] = useState<number | null>(null)
   const [remaining, setRemaining] = useState<number | null>(null)
   /**
-   * 刚落库的那一条。5 秒内可以撤销 —— 保存 id 和原始草稿，
-   * 撤销成功后把草稿放回列表，用户能重新点别的按钮。
+   * 这一轮里被拒绝掉的时刻。「换一批」时一起带上：
+   * 拒绝是"这条我不要"，换个位置再给同一条等于没听用户的话。
    */
-  const [undo, setUndo] = useState<{ id: number; draft: ActivityDraft; label: string } | null>(null)
+  const [rejected, setRejected] = useState<string[]>([])
+  /**
+   * 刚被接受的那一条。5 秒内可以撤销 —— 保存 id 和原始草稿，
+   * 撤销成功后把草稿放回列表，用户能重新决定。
+   */
+  const [undo, setUndo] = useState<{ id: number; draft: ActivityDraft } | null>(null)
   const [undoLeft, setUndoLeft] = useState(0)
 
   const load = useCallback(
     async (exclude: string[] = []): Promise<boolean> => {
+      // 只有走到这里才算"用户要求生成"：面板打开本身不算
+      setStarted(true)
       setLoading(true)
       setEngineError('')
       try {
@@ -126,10 +158,21 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
     [day, engine, note, onError],
   )
 
-  // 打开就加载；换日期或换引擎要重来一次 —— 否则屏幕上这批草稿是按旧条件算的
+  // 条件变了（换日期 / 换引擎 / 改给模型的偏好文本），屏幕上这批草稿就是按旧条件算的。
+  // 以前这里会自动重算；现在改成**退回"未生成"状态**，让用户自己决定要不要重新生成 ——
+  // 不然只是切一下引擎就会悄悄烧掉一次模型调用。
+  //
+  // settingsKey 也在依赖里：偏好/时长改过之后，这批候选是按旧规则算的。
+  // 留着它是错的（"我刚加了喝咖啡，怎么还是只有走动"），所以一起退回未生成。
   useEffect(() => {
-    void load()
-  }, [load])
+    setStarted(false)
+    setDrafts([])
+    setExplanation('')
+    setEngineError('')
+    setNotice('')
+    setRejected([])
+    setUndo(null)
+  }, [day, engine, note, settingsKey])
 
   /**
    * 登录过期交给页面统一处理（它会把人踢回登录页）。
@@ -181,34 +224,56 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
     return () => window.clearInterval(timer)
   }, [undo])
 
-  async function handleDecision(index: number, decision: SuggestionDecision) {
+  /** 在这一行改钟点。改完立刻按时间重排，列表顺序始终和时刻一致。 */
+  function handleTimeChange(index: number, clock: string) {
+    if (!clock) return
+    setDrafts((prev) =>
+      prev
+        .map((item, position) =>
+          position === index ? { ...item, scheduled_at: withTime(item.scheduled_at, clock) } : item,
+        )
+        .sort(byTime),
+    )
+    setNotice('')
+  }
+
+  /** 同意 = 存成待执行，之后它就出现在下面的安排列表里，可以在那里改时间/标完成。 */
+  async function handleAccept(index: number) {
     const draft = drafts[index]
     if (!draft || busy !== null) return
     setBusy(index)
     setEngineError('')
     try {
-      const result = await confirmActivitySuggestions([{ ...draft, decision }])
+      const result = await confirmActivitySuggestions([{ ...draft, decision: 'later' }])
       // 保存后的那条在返回列表里：按时刻找，比按 title 找可靠
       const saved = result.activities.find((item) => item.scheduled_at === draft.scheduled_at)
       setDrafts((prev) => prev.filter((_, position) => position !== index))
-      if (saved) {
-        setUndo({
-          id: saved.id,
-          draft,
-          label: `「${hhmm(draft.scheduled_at)} ${draft.title}」已记为${DECISION_LABEL[decision]}`,
-        })
-      }
-      setNotice(
-        decision === 'done'
-          ? '已记为完成，去动一动吧。点错了可以 5 秒内撤销。'
-          : `已记为${DECISION_LABEL[decision]}。`,
-      )
+      if (saved) setUndo({ id: saved.id, draft })
+      setNotice('已接受，这条已写进下面的安排。点错了可以 5 秒内撤销。')
       onSaved()
     } catch (err) {
+      // 改过时间之后，后端可能按规则拒掉（免打扰、间隔不足、撞上别的安排）
       fail(err, '保存失败')
     } finally {
       setBusy(null)
     }
+  }
+
+  /**
+   * 拒绝 = 这条不要，**不写库**。
+   *
+   * 以前这里会存一条 status=skipped 的记录，于是"我拒绝的"和"我安排好的"
+   * 挤在同一个列表里，用户分不清哪个是日程。现在拒绝只影响这一批候选。
+   */
+  function handleReject(index: number) {
+    const draft = drafts[index]
+    if (!draft || busy !== null) return
+    setDrafts((prev) => prev.filter((_, position) => position !== index))
+    // 只留最近 16 个：这个列表只用来喂"换一批"的 exclude（后端上限 24），
+    // 无限增长既没用，还会在长会话里慢慢撑大请求体
+    setRejected((prev) => [...prev, draft.scheduled_at].slice(-16))
+    setEngineError('')
+    setNotice(`已拒绝 ${hhmm(draft.scheduled_at)} 这条，它不会写进下面的安排。`)
   }
 
   async function handleUndo() {
@@ -218,39 +283,12 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
     setBusy(-1)
     try {
       await undoActivity(target.id)
-      // 放回列表并重新排序：草稿回到用户手上，可以重新点
+      // 放回列表并重新排序：草稿回到用户手上，可以重新决定
       setDrafts((prev) => [...prev, target.draft].sort(byTime))
       setNotice('已撤销，这条又回到建议列表里了。')
       onSaved()
     } catch (err) {
       fail(err, '撤销失败')
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function handleReshuffle(index: number) {
-    const draft = drafts[index]
-    if (!draft || busy !== null) return
-    setBusy(index)
-    setEngineError('')
-    try {
-      const result = await reshuffleActivitySuggestion({
-        at: draft.scheduled_at,
-        activity_type: draft.activity_type,
-        // 同批其他几条还没入库，不带上的话换出来的位置会在保存时撞车
-        keep: drafts.filter((_, position) => position !== index).map((item) => item.scheduled_at),
-        day,
-      })
-      setDrafts((prev) =>
-        prev
-          .map((item, position) => (position === index ? result.suggestion : item))
-          .sort(byTime),
-      )
-      setRemaining(result.remaining)
-      setNotice(`换到了 ${hhmm(result.suggestion.scheduled_at)}（${result.suggestion.title}）。`)
-    } catch (err) {
-      fail(err, '换一条失败')
     } finally {
       setBusy(null)
     }
@@ -262,9 +300,16 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
     setEngineError('')
     setNotice('')
     try {
-      // 把当前这批全部否决掉再排一次。后端会把这些时刻从可用空间里挖掉，
-      // 所以换出来的位置一定是新的 —— 否则这个按钮就是摆设
-      const ok = await load(drafts.map((item) => item.scheduled_at))
+      // 把当前这批和被拒绝过的时刻全部否决掉再排一次。后端会把这些时刻
+      // 从可用空间里挖掉，所以换出来的位置一定是新的 —— 否则这个按钮就是摆设。
+      //
+      // 上限 24 是后端 exclude 字段的 max_length：当前这批最多 8 条，
+      // 所以拒绝记录只带最近 16 个 —— 优先保证"这一批"一定被排除掉。
+      const exclude = [
+        ...drafts.map((item) => item.scheduled_at),
+        ...rejected.slice(-16),
+      ]
+      const ok = await load(exclude)
       // 换不出来（那天只剩三个小空档）时后端会明确报错，这时不能说"换了一批"：
       // load 已经把自己的错误显示出来了，这里只负责别再说反话
       if (ok) setNotice('换了一批。')
@@ -278,13 +323,13 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
     setBusy(-1)
     setEngineError('')
     try {
-      // 全部接受 = 全部存成待执行。想标完成就在行上点，别在这里猜
+      // 全部同意 = 全部存成待执行。要不要标完成，去下面的安排列表里点
       const result = await confirmActivitySuggestions(
         drafts.map((draft) => ({ ...draft, decision: 'later' as const })),
       )
       setDrafts([])
       setUndo(null)
-      setNotice(`已保存 ${result.saved} 条，都可以在下面的列表里逐个处理。`)
+      setNotice(`已接受 ${result.saved} 条，都在下面的安排里，可以逐条改时间或标完成。`)
       onSaved()
     } catch (err) {
       fail(err, '保存失败')
@@ -302,7 +347,11 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
         <div className="suggestions__intro">
           <h2 className="suggestions__title">这几条先给你看看</h2>
           <p className="hint">
-            {loading ? '正在算…' : explanation || '按你的可活动时段算出来的候选。'}
+            {!started
+              ? '还没生成。点下面的「生成建议」，按当前设置算几条候选给你看。'
+              : loading
+                ? '正在算…'
+                : explanation || '按你的可活动时段算出来的候选。点「同意」才会写进下面的安排。'}
           </p>
         </div>
         <button className="button button--ghost button--small" type="button" onClick={onClose}>
@@ -319,7 +368,9 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
       {undo && (
         // 撤销条比弹窗轻：不遮挡列表，也不会因为用户没点而卡住流程
         <div className="undo-bar">
-          <span className="undo-bar__text">{undo.label}</span>
+          <span className="undo-bar__text">
+            「{hhmm(undo.draft.scheduled_at)} {undo.draft.title}」已接受
+          </span>
           <button className="undo-bar__button" type="button" onClick={() => void handleUndo()}>
             撤销（{undoLeft} 秒）
           </button>
@@ -328,17 +379,56 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
 
       {notice && <p className="banner banner--info">{notice}</p>}
 
-      {loading ? (
-        <p className="hint state-line">正在生成建议…</p>
-      ) : drafts.length === 0 ? (
-        <p className="hint state-line">
-          没有待确认的建议了。可以换一批，或者直接在上面生成安排。
-        </p>
-      ) : (
+      {/* 未生成：只显示一个按钮。打开面板不等于要生成 ——
+          选 DeepSeek 时那是一次真金白银的调用，选规则也会算出一批用户可能根本不想要的东西。 */}
+      {!started && (
+        <div className="suggestions__idle">
+          <button
+            className="button button--primary"
+            type="button"
+            disabled={disabled}
+            onClick={() => void load()}
+          >
+            生成建议
+          </button>
+          <span className="hint hint--small">
+            用{engine === 'llm' ? ' DeepSeek ' : '本地规则'}算，生成后逐条点「同意 / 拒绝」。
+            同意才会写进下面的安排，拒绝不写库。
+          </span>
+        </div>
+      )}
+
+      {started && loading && <p className="hint state-line">正在生成建议…</p>}
+
+      {started && !loading && drafts.length === 0 && (
+        <div className="suggestions__idle">
+          <button
+            className="button"
+            type="button"
+            disabled={disabled}
+            onClick={() => void load()}
+          >
+            再生成一批
+          </button>
+          <span className="hint hint--small">这批处理完了。再点一次会按当前设置重新算。</span>
+        </div>
+      )}
+
+      {started && !loading && drafts.length > 0 && (
         <ul className="suggestion-list">
           {drafts.map((draft, index) => (
             <li className="suggestion" key={`${draft.scheduled_at}-${draft.activity_type}`}>
-              <div className="suggestion__time">{hhmm(draft.scheduled_at)}</div>
+              <div className="suggestion__time">
+                <input
+                  className="suggestion__time-input"
+                  type="time"
+                  value={hhmm(draft.scheduled_at)}
+                  disabled={disabled}
+                  aria-label={`${draft.title} 的时间`}
+                  title="只改钟点，日期还是这一天"
+                  onChange={(event) => handleTimeChange(index, event.target.value)}
+                />
+              </div>
               <div className="suggestion__body">
                 <p className="suggestion__title">{draft.title}</p>
                 <p className="hint hint--small">{draft.description}</p>
@@ -349,39 +439,19 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
                   className="button button--primary button--small"
                   type="button"
                   disabled={disabled}
-                  onClick={() => void handleDecision(index, 'done')}
-                  title="存下来并标记为已完成，一步到位"
+                  onClick={() => void handleAccept(index)}
+                  title="同意就写进下面的安排，之后可以在那里改时间、标完成"
                 >
-                  完成
-                </button>
-                <button
-                  className="button button--small"
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => void handleDecision(index, 'later')}
-                  title="存成待执行，到点再提醒"
-                >
-                  稍后做
+                  {busy === index ? '保存中…' : '同意'}
                 </button>
                 <button
                   className="button button--ghost button--small"
                   type="button"
                   disabled={disabled}
-                  onClick={() => void handleDecision(index, 'skip')}
-                  title="这天不做这条，但留一条记录"
+                  onClick={() => handleReject(index)}
+                  title="不要这条，不写进安排"
                 >
-                  不方便
-                </button>
-                <button
-                  className="button button--ghost button--small"
-                  type="button"
-                  disabled={disabled || !canReshuffle}
-                  onClick={() => void handleReshuffle(index)}
-                  title={
-                    canReshuffle ? '在原来那条附近换一个空位' : '今天换的次数用完了，明天再来'
-                  }
-                >
-                  换时间
+                  拒绝
                 </button>
               </div>
             </li>
@@ -397,7 +467,7 @@ export default function SuggestionPanel({ day, engine, note, onSaved, onError, o
             disabled={disabled}
             onClick={() => void handleAcceptAll()}
           >
-            全部接受（存为待执行）
+            全部同意（写进下面的安排）
           </button>
           <button
             className="button"
