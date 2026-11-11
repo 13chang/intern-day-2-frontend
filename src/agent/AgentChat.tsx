@@ -19,10 +19,17 @@ import { useQueryTrail } from './useQueryTrail'
 // 只有 Runtime 部署在独立域名下才需要用 VITE_COPILOT_RUNTIME_URL 覆盖成绝对地址。
 // 原生 App 里没有 vite 代理：相对路径会打到 WebView 自己的资源服务器，拿到 404。
 // 必须用绝对地址指向宿主机的 Runtime；只有模拟器里 10.0.2.2 才指向宿主机。
-// 端口是 4123 而不是 4000：宿主机 4000 常被别的项目占用（见 compose.yaml 里
-// runtime 服务的端口映射），容器内仍监听 4000，宿主机侧对外是 4123。
-// 实体机联调用 VITE_COPILOT_RUNTIME_URL 覆盖成局域网地址。
-const NATIVE_RUNTIME_URL = 'http://10.0.2.2:4123/api/copilotkit'
+//
+// 端口必须和 api.ts 的 NATIVE_DEFAULT_BASE_URL 属于**同一套环境**：
+//   开发环境（VS Code / devcontainer）：Runtime 4000，API 8000，两个都由 VS Code 转发
+//   compose 那套：                      Runtime 4123，API 8001
+// 这里曾经写死 4123 而 api.ts 写死 8000，于是登录落在开发库、聊天落在 compose 库，
+// 两张 sessions 表对不上 —— 聊天必然 401，前端把它当成「登录失效」直接退回登录页，
+// 表现就是「一说话就被踢出去」，而令牌其实是刚签发的。
+// 现在统一到开发环境这套（4000）；改用 compose 演示时用
+// VITE_COPILOT_RUNTIME_URL=http://10.0.2.2:4123/api/copilotkit 覆盖。
+// 实体机联调同理，覆盖成局域网地址。
+const NATIVE_RUNTIME_URL = 'http://10.0.2.2:4000/api/copilotkit'
 
 const RUNTIME_URL =
   (import.meta.env.VITE_COPILOT_RUNTIME_URL as string | undefined) ??
